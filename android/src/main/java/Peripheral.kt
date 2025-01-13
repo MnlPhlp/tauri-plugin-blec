@@ -1,6 +1,8 @@
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothDevice.PHY_LE_2M_MASK
+import android.bluetooth.BluetoothDevice.PHY_OPTION_NO_PREFERRED
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
@@ -55,10 +57,14 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     }
 
     private val callback = object:BluetoothGattCallback(){
+        @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
             if(status == BluetoothGatt.GATT_SUCCESS && newState==BluetoothGatt.STATE_CONNECTED && gatt!=null){
                 this@Peripheral.connected = true
                 this@Peripheral.gatt = gatt
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    gatt.setPreferredPhy(PHY_LE_2M_MASK, PHY_LE_2M_MASK, PHY_OPTION_NO_PREFERRED);
+                }
                 this@Peripheral.onConnectionStateChange?.invoke(true,"")
                 this@Peripheral.sendEvent(Event.DeviceConnected)
 
