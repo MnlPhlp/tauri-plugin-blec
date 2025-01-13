@@ -36,6 +36,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     private val onReadInvoke:MutableMap<UUID,Invoke> = mutableMapOf()
     private val onWriteInvoke:MutableMap<UUID,Invoke> = mutableMapOf()
     private var onDescriptorInvoke: Invoke? = null
+    private var onMtuChangedInvoke: Invoke? = null
 
     private enum class Event{
         DeviceConnected,
@@ -144,6 +145,19 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 this@Peripheral.onDescriptorInvoke?.resolve()
             }
         }
+
+        override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+            println("Mtu Changed: $mtu, Status: $status")
+            val invoke = this@Peripheral.onMtuChangedInvoke;
+            this@Peripheral.onMtuChangedInvoke = null;
+            if ( invoke != null){
+                if(status == BluetoothGatt.GATT_SUCCESS){
+                    invoke.resolve();
+                } else {
+                    invoke.reject("MtuChanged returned error $status");
+                }
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -157,6 +171,16 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             this@Peripheral.onConnectionStateChange = null
         }
         this.device.connectGatt(activity, false, this.callback)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun requestMtu(invoke:Invoke, mtu: Int) {
+        if (this.gatt == null){
+            invoke.reject("No gatt server connected")
+            return
+        }
+        this.onMtuChangedInvoke=invoke;
+        this.gatt!!.requestMtu(mtu);
     }
 
     @SuppressLint("MissingPermission")

@@ -18,6 +18,12 @@ class ConnectParams{
     val address: String = ""
 }
 
+@InvokeArg
+class MtuParams{
+    val address: String = ""
+    val mtu: Int = 0
+}
+
 @TauriPlugin
 class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     var devices: MutableMap<String, Peripheral> = mutableMapOf();
@@ -49,6 +55,17 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
             return
         }
         device.connect(invoke)
+    }
+
+    @Command
+    fun request_mtu(invoke: Invoke){
+        val args = invoke.parseArgs(MtuParams::class.java)
+        val device = this.devices[args.address]
+        if (device == null){
+            invoke.reject("Device not found")
+            return
+        }
+        device.requestMtu(invoke,args.mtu)
     }
 
     @Command
