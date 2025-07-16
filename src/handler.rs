@@ -22,6 +22,7 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 
 struct Listener {
     uuid: Uuid,
+    service: Uuid,
     callback: SubscriptionHandler,
 }
 
@@ -37,6 +38,14 @@ struct HandlerState {
 impl HandlerState {
     fn get_charac(&self, uuid: Uuid) -> Result<&Characteristic, Error> {
         let charac = self.characs.iter().find(|c| c.uuid == uuid);
+        charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
+    }
+
+    fn get_charac_from_service(&self, uuid: Uuid, service: Uuid) -> Result<&Characteristic, Error> {
+        let charac = self
+            .characs
+            .iter()
+            .find(|c| c.uuid == uuid && c.service_uuid == service);
         charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
     }
 }
@@ -641,6 +650,32 @@ impl Handler {
         dev.subscribe(charac).await?;
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,
+            service: charac.service_uuid,
+            callback: callback.into(),
+        });
+        Ok(())
+    }
+
+    /// Subscribe to notifications from the given characteristic in the given service
+    /// This is usefull if the same characteristic UUID exists in multiple services
+    /// Otherwise behaves like [`Handler::subscribe`]
+    /// # Errors
+    /// Returns an error if no device is connected or the characteristic is not available
+    /// or if the subscribe operation fails
+    pub async fn subscribe_for_service(
+        &self,
+        c: Uuid,
+        service: Uuid,
+        callback: impl Into<SubscriptionHandler>,
+    ) -> Result<(), Error> {
+        let dev = self.connected_dev.lock().await;
+        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
+        let state = self.state.lock().await;
+        let charac = state.get_charac_from_service(c, service)?;
+        dev.subscribe(charac).await?;
+        self.notify_listeners.lock().await.push(Listener {
+            uuid: charac.uuid,
+            service: charac.service_uuid,
             callback: callback.into(),
         });
         Ok(())
