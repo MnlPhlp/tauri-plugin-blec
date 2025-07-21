@@ -102,16 +102,17 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
     }
 
     public fun checkPermissions(): Boolean {
-
         val permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.ACCESS_FINE_LOCATION
             )
         } else {
             arrayOf(
                 Manifest.permission.BLUETOOTH_ADMIN,
                 Manifest.permission.BLUETOOTH,
+                Manifest.permission.ACCESS_FINE_LOCATION
             )
         };
         for (perm in permissions){
