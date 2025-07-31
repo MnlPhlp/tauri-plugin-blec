@@ -1,6 +1,6 @@
 {
   "name": "@mnlphlp/plugin-blec",
-  "version": "0.4.1",
+  "version": "0.5.3",
   "author": "Manuel Philipp",
   "description": "JS Bindings for BLE-Client plugin for Tauri",
   "license": "(MIT OR Apache-2.0)",
