@@ -1,3 +1,4 @@
+use crate::ALLOW_IBEACONS;
 use async_trait::async_trait;
 use base64::Engine;
 use btleplug::{
@@ -105,6 +106,7 @@ impl btleplug::api::Central for Adapter {
         #[serde(rename_all = "camelCase")]
         struct ScanParams {
             services: Vec<Uuid>,
+            allow_ibeacons: bool,
             on_device: Channel<serde_json::Value>,
         }
         DEVICES.write().await.clear();
@@ -114,6 +116,7 @@ impl btleplug::api::Central for Adapter {
                 "start_scan",
                 ScanParams {
                     services: filter.services,
+                    allow_ibeacons: *ALLOW_IBEACONS.lock().await,
                     on_device,
                 },
             )

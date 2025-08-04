@@ -13,6 +13,7 @@ pub(crate) async fn scan<R: Runtime>(
     _app: AppHandle<R>,
     timeout: u64,
     on_devices: Channel<Vec<BleDevice>>,
+    allow_ibeacons: bool,
 ) -> Result<()> {
     tracing::info!("Scanning for BLE devices");
     let handler = get_handler()?;
@@ -25,7 +26,7 @@ pub(crate) async fn scan<R: Runtime>(
         }
     });
     handler
-        .discover(Some(tx), timeout, ScanFilter::None)
+        .discover(Some(tx), timeout, ScanFilter::None, allow_ibeacons)
         .await?;
     Ok(())
 }
@@ -43,6 +44,7 @@ pub(crate) async fn connect<R: Runtime>(
     _app: AppHandle<R>,
     address: String,
     on_disconnect: Channel<()>,
+    allow_ibeacons: bool,
 ) -> Result<()> {
     tracing::info!("Connecting to BLE device: {:?}", address);
     let handler = get_handler()?;
@@ -51,7 +53,9 @@ pub(crate) async fn connect<R: Runtime>(
             .send(())
             .expect("failed to send disconnect event to the front-end");
     };
-    handler.connect(&address, disconnct_handler.into()).await?;
+    handler
+        .connect(&address, disconnct_handler.into(), allow_ibeacons)
+        .await?;
     Ok(())
 }
 

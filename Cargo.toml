@@ -1,11 +1,11 @@
 [package]
 name = "tauri-plugin-blec"
 license = "MIT OR Apache-2.0"
-version = "0.5.3"
+version = "0.6.0"
 authors = ["Manuel Philipp"]
 description = "BLE-Client plugin for Tauri"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.80.0"
 exclude = ["/examples", "/webview-dist", "/webview-src", "/node_modules"]
 links = "tauri-plugin-blec"
 repository = "https://github.com/MnlPhlp/tauri-plugin-blec"

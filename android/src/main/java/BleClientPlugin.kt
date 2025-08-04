@@ -176,7 +176,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
 
     @Command
     fun check_permissions(invoke: Invoke){
-        val granted = client.checkPermissions();
+        val granted = client.checkPermissions(false);
         val ret = JSObject();
         ret.put("result",granted)
         invoke.resolve(ret);

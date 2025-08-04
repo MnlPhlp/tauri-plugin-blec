@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::models::{self, fmt_addr, BleDevice, ScanFilter, Service};
+use crate::ALLOW_IBEACONS;
 use btleplug::api::CentralEvent;
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _};
 use btleplug::platform::PeripheralId;
@@ -222,9 +223,11 @@ impl Handler {
         &'static self,
         address: &str,
         on_disconnect: OnDisconnectHandler,
+        allow_ibeacons: bool,
     ) -> Result<(), Error> {
         if self.devices.lock().await.len() == 0 {
-            self.discover(None, 1000, ScanFilter::None).await?;
+            self.discover(None, 1000, ScanFilter::None, allow_ibeacons)
+                .await?;
         }
         // cancel any running discovery
         let _ = self.stop_scan().await;
@@ -404,6 +407,8 @@ impl Handler {
     /// returns immediately.
     ///
     /// A Variant of [`ScanFilter`] can be provided to filter the discovered devices
+    /// When `allow_ibeacons` is set to true, android will request fine location permission to
+    /// allow finding and connecting to iBeacons.
     ///
     /// # Errors
     /// Returns an error if starting the scan fails
@@ -429,6 +434,7 @@ impl Handler {
         tx: Option<mpsc::Sender<Vec<BleDevice>>>,
         timeout: u64,
         filter: ScanFilter,
+        allow_ibeacons: bool,
     ) -> Result<(), Error> {
         if let ScanFilter::ManufacturerDataMasked(_, ref data, ref mask) = filter {
             if data.len() != mask.len() {
@@ -443,6 +449,7 @@ impl Handler {
                 self.adapter.stop_scan().await?;
             }
             // start a new scan
+            *ALLOW_IBEACONS.lock().await = allow_ibeacons;
             self.adapter
                 .start_scan(btleplug::api::ScanFilter::default())
                 .await?;

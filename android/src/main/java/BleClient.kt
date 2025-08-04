@@ -101,9 +101,9 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
             .getBoolean(perm, true)
     }
 
-    public fun checkPermissions(): Boolean {
+    public fun checkPermissions(allowIbeacons: Boolean): Boolean {
 
-        val permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        var permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_CONNECT
@@ -114,6 +114,9 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                 Manifest.permission.BLUETOOTH,
             )
         };
+        if (allowIbeacons) {
+            permissions += Manifest.permission.ACCESS_FINE_LOCATION
+        }
         for (perm in permissions){
             if (ActivityCompat.checkSelfPermission(
                     activity,
@@ -144,6 +147,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
     class ScanParams {
         val services: ArrayList<String> = ArrayList()
         val onDevice: Channel? = null
+        val allowIbeacons: Boolean = false
     }
     @SuppressLint("MissingPermission")
     fun startScan(invoke: Invoke) {
@@ -152,8 +156,9 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
             invoke.reject("Scan already running")
             return
         }
+        val args = invoke.parseArgs(ScanParams::class.java)
         // check permission
-        if (!checkPermissions()){
+        if (!checkPermissions(args.allowIbeacons)){
             invoke.reject("Missing permissions");
             return
         }
@@ -176,7 +181,6 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         // clear old devices
         this.plugin.devices.clear()
 
-        val args = invoke.parseArgs(ScanParams::class.java)
         var filters: ArrayList<ScanFilter?>? = null
         if (args.services.size > 0) {
             filters = ArrayList()

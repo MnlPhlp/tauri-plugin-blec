@@ -15,7 +15,7 @@ export type BleDevice = {
   * @param handler - A function that will be called with an array of devices found during the scan
   * @param timeout - The scan timeout in milliseconds
 */
-export async function startScan(handler: (devices: BleDevice[]) => void, timeout: Number) {
+export async function startScan(handler: (devices: BleDevice[]) => void, timeout: Number, allowIbeacons: boolean = false) {
   if (!timeout) {
     timeout = 10000;
   }
@@ -23,7 +23,8 @@ export async function startScan(handler: (devices: BleDevice[]) => void, timeout
   onDevices.onmessage = handler;
   await invoke<BleDevice[]>('plugin:blec|scan', {
     timeout,
-    onDevices
+    onDevices,
+    allowIbeacons
   })
 }
 
@@ -72,14 +73,15 @@ export async function disconnect() {
   * @param address - The address of the device to connect to
   * @param onDisconnect - A function that will be called when the device disconnects
 */
-export async function connect(address: string, onDisconnect: (() => void) | null) {
+export async function connect(address: string, onDisconnect: (() => void) | null, allowIbeacons: boolean = false) {
   let disconnectChannel = new Channel()
   if (onDisconnect) {
     disconnectChannel.onmessage = onDisconnect
   }
   await invoke('plugin:blec|connect', {
     address: address,
-    onDisconnect: disconnectChannel
+    onDisconnect: disconnectChannel,
+    allowIbeacons
   })
 }
 

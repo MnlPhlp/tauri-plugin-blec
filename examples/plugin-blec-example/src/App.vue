@@ -62,9 +62,14 @@ const showServices = ref(false);
         <div></div>
       </div>
     </button>
-    <button v-else :onclick="() => startScan((dev: BleDevice[]) => devices = dev, 10000)" style="margin-bottom: 5px;">
-      Start Scan
-    </button>
+    <div v-else>
+      <button :onclick="() => startScan((dev: BleDevice[]) => devices = dev, 10000)" style="margin-bottom: 5px;">
+        Start Scan
+      </button>
+      <button :onclick="() => startScan((dev: BleDevice[]) => devices = dev, 10000, true)" style="margin-bottom: 5px;">
+        Start Scan with IBeacons (Location Permission)
+      </button>
+    </div>
     <div v-if="connected">
       <p>Connected</p>
       <div class="row">
