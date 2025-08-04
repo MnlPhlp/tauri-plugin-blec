@@ -22,6 +22,7 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 
 struct Listener {
     uuid: Uuid,
+    service: Uuid,
     callback: SubscriptionHandler,
 }
 
@@ -37,6 +38,14 @@ struct HandlerState {
 impl HandlerState {
     fn get_charac(&self, uuid: Uuid) -> Result<&Characteristic, Error> {
         let charac = self.characs.iter().find(|c| c.uuid == uuid);
+        charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
+    }
+
+    fn get_charac_from_service(&self, uuid: Uuid, service: Uuid) -> Result<&Characteristic, Error> {
+        let charac = self
+            .characs
+            .iter()
+            .find(|c| c.uuid == uuid && c.service_uuid == service);
         charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
     }
 }
@@ -590,6 +599,26 @@ impl Handler {
         Ok(())
     }
 
+    /// Sends data to the given characteristic of the connected device in the given service
+    /// This is useful if the same characteristic UUID exists in multiple services
+    /// Otherwise behaves like [`Handler::send_data`]
+    /// # Errors
+    /// Returns an error if no device is connected or the characteristic is not available
+    pub async fn send_data_with_service(
+        &self,
+        c: Uuid,
+        service: Uuid,
+        data: &[u8],
+        write_type: models::WriteType,
+    ) -> Result<(), Error> {
+        let dev = self.connected_dev.lock().await;
+        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
+        let state = self.state.lock().await;
+        let charac = state.get_charac_from_service(c, service)?;
+        dev.write(charac, data, write_type.into()).await?;
+        Ok(())
+    }
+
     /// Receives data from the given characteristic of the connected device
     /// Returns the data as a vector of bytes
     /// # Errors
@@ -610,6 +639,20 @@ impl Handler {
         let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
         let state = self.state.lock().await;
         let charac = state.get_charac(c)?;
+        let data = dev.read(charac).await?;
+        Ok(data)
+    }
+
+    /// Receives data from the given characteristic of the connected device in the given service
+    /// This is useful if the same characteristic UUID exists in multiple services
+    /// Otherwise behaves like [`Handler::recv_data`]
+    /// # Errors
+    /// Returns an error if no device is connected or the characteristic is not available
+    pub async fn recv_data_with_service(&self, c: Uuid, service: Uuid) -> Result<Vec<u8>, Error> {
+        let dev = self.connected_dev.lock().await;
+        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
+        let state = self.state.lock().await;
+        let charac = state.get_charac_from_service(c, service)?;
         let data = dev.read(charac).await?;
         Ok(data)
     }
@@ -641,6 +684,32 @@ impl Handler {
         dev.subscribe(charac).await?;
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,
+            service: charac.service_uuid,
+            callback: callback.into(),
+        });
+        Ok(())
+    }
+
+    /// Subscribe to notifications from the given characteristic in the given service
+    /// This is usefull if the same characteristic UUID exists in multiple services
+    /// Otherwise behaves like [`Handler::subscribe`]
+    /// # Errors
+    /// Returns an error if no device is connected or the characteristic is not available
+    /// or if the subscribe operation fails
+    pub async fn subscribe_with_service(
+        &self,
+        c: Uuid,
+        service: Uuid,
+        callback: impl Into<SubscriptionHandler>,
+    ) -> Result<(), Error> {
+        let dev = self.connected_dev.lock().await;
+        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
+        let state = self.state.lock().await;
+        let charac = state.get_charac_from_service(c, service)?;
+        dev.subscribe(charac).await?;
+        self.notify_listeners.lock().await.push(Listener {
+            uuid: charac.uuid,
+            service: charac.service_uuid,
             callback: callback.into(),
         });
         Ok(())
