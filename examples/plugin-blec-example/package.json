@@ -13,7 +13,7 @@
     "@mnlphlp/plugin-blec": "file:../..",
     "@tauri-apps/api": ">=2.0.0",
     "@tauri-apps/plugin-log": "~2",
-    "@tauri-apps/plugin-shell": ">=2.0.0",
+    "@tauri-apps/plugin-shell": ">=2.2.1",
     "vue": "^3.3.4"
   },
   "devDependencies": {
