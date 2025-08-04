@@ -12,12 +12,13 @@ async fn test() -> bool {
     handler
         .send_data(
             CHARACTERISTIC_UUID,
+            None,
             &DATA,
             tauri_plugin_blec::models::WriteType::WithoutResponse,
         )
         .await
         .unwrap();
-    let response = handler.recv_data(CHARACTERISTIC_UUID).await.unwrap();
+    let response = handler.recv_data(CHARACTERISTIC_UUID, None).await.unwrap();
     let time = start.elapsed();
     info!("Time elapsed: {:?}", time);
     assert_eq!(response, DATA);

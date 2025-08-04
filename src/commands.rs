@@ -115,19 +115,26 @@ pub(crate) async fn scanning_state<R: Runtime>(
 pub(crate) async fn send<R: Runtime>(
     _app: AppHandle<R>,
     characteristic: Uuid,
+    service: Option<Uuid>,
     data: Vec<u8>,
     write_type: WriteType,
 ) -> Result<()> {
     info!("Sending data: {data:?}");
     let handler = get_handler()?;
-    handler.send_data(characteristic, &data, write_type).await?;
+    handler
+        .send_data(characteristic, service, &data, write_type)
+        .await?;
     Ok(())
 }
 
 #[command]
-pub(crate) async fn recv<R: Runtime>(_app: AppHandle<R>, characteristic: Uuid) -> Result<Vec<u8>> {
+pub(crate) async fn recv<R: Runtime>(
+    _app: AppHandle<R>,
+    characteristic: Uuid,
+    service: Option<Uuid>,
+) -> Result<Vec<u8>> {
     let handler = get_handler()?;
-    let data = handler.recv_data(characteristic).await?;
+    let data = handler.recv_data(characteristic, service).await?;
     Ok(data)
 }
 
@@ -135,27 +142,32 @@ pub(crate) async fn recv<R: Runtime>(_app: AppHandle<R>, characteristic: Uuid) -
 pub(crate) async fn send_string<R: Runtime>(
     app: AppHandle<R>,
     characteristic: Uuid,
+    service: Option<Uuid>,
     data: String,
     write_type: WriteType,
 ) -> Result<()> {
     let data = data.as_bytes().to_vec();
-    send(app, characteristic, data, write_type).await
+    send(app, characteristic, service, data, write_type).await
 }
 
 #[command]
 pub(crate) async fn recv_string<R: Runtime>(
     app: AppHandle<R>,
     characteristic: Uuid,
+    service: Option<Uuid>,
 ) -> Result<String> {
-    let data = recv(app, characteristic).await?;
+    let data = recv(app, characteristic, service).await?;
     Ok(String::from_utf8(data).expect("failed to convert data to string"))
 }
 
-async fn subscribe_channel(characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
+async fn subscribe_channel(
+    characteristic: Uuid,
+    service: Option<Uuid>,
+) -> Result<mpsc::Receiver<Vec<u8>>> {
     let handler = get_handler()?;
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     handler
-        .subscribe(characteristic, move |data: Vec<u8>| {
+        .subscribe(characteristic, service, move |data: Vec<u8>| {
             info!("subscribe_channel: {:?}", data);
             tx.try_send(data)
                 .expect("failed to send data to the channel");
@@ -167,9 +179,10 @@ async fn subscribe_channel(characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8
 pub(crate) async fn subscribe<R: Runtime>(
     _app: AppHandle<R>,
     characteristic: Uuid,
+    service: Option<Uuid>,
     on_data: Channel<Vec<u8>>,
 ) -> Result<()> {
-    let mut rx = subscribe_channel(characteristic).await?;
+    let mut rx = subscribe_channel(characteristic, service).await?;
     async_runtime::spawn(async move {
         while let Some(data) = rx.recv().await {
             on_data
@@ -184,9 +197,10 @@ pub(crate) async fn subscribe<R: Runtime>(
 pub(crate) async fn subscribe_string<R: Runtime>(
     _app: AppHandle<R>,
     characteristic: Uuid,
+    service: Option<Uuid>,
     on_data: Channel<String>,
 ) -> Result<()> {
-    let mut rx = subscribe_channel(characteristic).await?;
+    let mut rx = subscribe_channel(characteristic, service).await?;
     async_runtime::spawn(async move {
         while let Some(data) = rx.recv().await {
             info!("subscribe_string: {:?}", data);

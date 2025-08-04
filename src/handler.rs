@@ -595,33 +595,19 @@ impl Handler {
     pub async fn send_data(
         &self,
         c: Uuid,
+        service: Option<Uuid>,
         data: &[u8],
         write_type: models::WriteType,
     ) -> Result<(), Error> {
         let dev = self.connected_dev.lock().await;
         let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
         let state = self.state.lock().await;
-        let charac = state.get_charac(c)?;
-        dev.write(charac, data, write_type.into()).await?;
-        Ok(())
-    }
+        let charac = if let Some(service) = service {
+            state.get_charac_from_service(c, service)?
+        } else {
+            state.get_charac(c)?
+        };
 
-    /// Sends data to the given characteristic of the connected device in the given service
-    /// This is useful if the same characteristic UUID exists in multiple services
-    /// Otherwise behaves like [`Handler::send_data`]
-    /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    pub async fn send_data_with_service(
-        &self,
-        c: Uuid,
-        service: Uuid,
-        data: &[u8],
-        write_type: models::WriteType,
-    ) -> Result<(), Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = state.get_charac_from_service(c, service)?;
         dev.write(charac, data, write_type.into()).await?;
         Ok(())
     }
@@ -641,25 +627,15 @@ impl Handler {
     ///     let response = handler.recv_data(CHARACTERISTIC_UUID).await.unwrap();
     /// });
     /// ```
-    pub async fn recv_data(&self, c: Uuid) -> Result<Vec<u8>, Error> {
+    pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
         let dev = self.connected_dev.lock().await;
         let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
         let state = self.state.lock().await;
-        let charac = state.get_charac(c)?;
-        let data = dev.read(charac).await?;
-        Ok(data)
-    }
-
-    /// Receives data from the given characteristic of the connected device in the given service
-    /// This is useful if the same characteristic UUID exists in multiple services
-    /// Otherwise behaves like [`Handler::recv_data`]
-    /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    pub async fn recv_data_with_service(&self, c: Uuid, service: Uuid) -> Result<Vec<u8>, Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = state.get_charac_from_service(c, service)?;
+        let charac = if let Some(service) = service {
+            state.get_charac_from_service(c, service)?
+        } else {
+            state.get_charac(c)?
+        };
         let data = dev.read(charac).await?;
         Ok(data)
     }
@@ -682,37 +658,17 @@ impl Handler {
     pub async fn subscribe(
         &self,
         c: Uuid,
+        service: Option<Uuid>,
         callback: impl Into<SubscriptionHandler>,
     ) -> Result<(), Error> {
         let dev = self.connected_dev.lock().await;
         let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
         let state = self.state.lock().await;
-        let charac = state.get_charac(c)?;
-        dev.subscribe(charac).await?;
-        self.notify_listeners.lock().await.push(Listener {
-            uuid: charac.uuid,
-            service: charac.service_uuid,
-            callback: callback.into(),
-        });
-        Ok(())
-    }
-
-    /// Subscribe to notifications from the given characteristic in the given service
-    /// This is usefull if the same characteristic UUID exists in multiple services
-    /// Otherwise behaves like [`Handler::subscribe`]
-    /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    /// or if the subscribe operation fails
-    pub async fn subscribe_with_service(
-        &self,
-        c: Uuid,
-        service: Uuid,
-        callback: impl Into<SubscriptionHandler>,
-    ) -> Result<(), Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = state.get_charac_from_service(c, service)?;
+        let charac = if let Some(service) = service {
+            state.get_charac_from_service(c, service)?
+        } else {
+            state.get_charac(c)?
+        };
         dev.subscribe(charac).await?;
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,

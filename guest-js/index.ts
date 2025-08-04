@@ -90,11 +90,12 @@ export async function connect(address: string, onDisconnect: (() => void) | null
  * @param characteristic UUID of the characteristic to write to
  * @param data Data to write to the characteristic
  */
-export async function send(characteristic: string, data: Uint8Array, writeType: 'withResponse' | 'withoutResponse' = 'withResponse') {
+export async function send(characteristic: string, data: Uint8Array, writeType: 'withResponse' | 'withoutResponse' = 'withResponse', service?: string) {
   await invoke('plugin:blec|send', {
     characteristic,
     data,
     writeType,
+    service
   })
 }
 
@@ -103,11 +104,12 @@ export async function send(characteristic: string, data: Uint8Array, writeType: 
  * @param characteristic UUID of the characteristic to write to
  * @param data Data to write to the characteristic
  */
-export async function sendString(characteristic: string, data: string, writeType: 'withResponse' | 'withoutResponse' = 'withResponse') {
+export async function sendString(characteristic: string, data: string, writeType: 'withResponse' | 'withoutResponse' = 'withResponse', service?: string) {
   await invoke('plugin:blec|send_string', {
     characteristic,
     data,
     writeType,
+    service
   })
 }
 
@@ -115,9 +117,10 @@ export async function sendString(characteristic: string, data: string, writeType
  * Read bytes from a BLE characteristic
  * @param characteristic UUID of the characteristic to read from
  */
-export async function read(characteristic: string): Promise<Uint8Array> {
+export async function read(characteristic: string, service?: string): Promise<Uint8Array> {
   let res = await invoke<Uint8Array>('plugin:blec|recv', {
-    characteristic
+    characteristic,
+    service
   })
   return res
 }
@@ -126,9 +129,10 @@ export async function read(characteristic: string): Promise<Uint8Array> {
  * Read a string from a BLE characteristic
  * @param characteristic UUID of the characteristic to read from
  */
-export async function readString(characteristic: string): Promise<string> {
+export async function readString(characteristic: string, service?: string): Promise<string> {
   let res = await invoke<string>('plugin:blec|recv_string', {
-    characteristic
+    characteristic,
+    service
   })
   return res
 }
