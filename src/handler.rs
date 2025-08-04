@@ -599,6 +599,26 @@ impl Handler {
         Ok(())
     }
 
+    /// Sends data to the given characteristic of the connected device in the given service
+    /// This is useful if the same characteristic UUID exists in multiple services
+    /// Otherwise behaves like [`Handler::send_data`]
+    /// # Errors
+    /// Returns an error if no device is connected or the characteristic is not available
+    pub async fn send_data_with_service(
+        &self,
+        c: Uuid,
+        service: Uuid,
+        data: &[u8],
+        write_type: models::WriteType,
+    ) -> Result<(), Error> {
+        let dev = self.connected_dev.lock().await;
+        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
+        let state = self.state.lock().await;
+        let charac = state.get_charac_from_service(c, service)?;
+        dev.write(charac, data, write_type.into()).await?;
+        Ok(())
+    }
+
     /// Receives data from the given characteristic of the connected device
     /// Returns the data as a vector of bytes
     /// # Errors
@@ -619,6 +639,20 @@ impl Handler {
         let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
         let state = self.state.lock().await;
         let charac = state.get_charac(c)?;
+        let data = dev.read(charac).await?;
+        Ok(data)
+    }
+
+    /// Receives data from the given characteristic of the connected device in the given service
+    /// This is useful if the same characteristic UUID exists in multiple services
+    /// Otherwise behaves like [`Handler::recv_data`]
+    /// # Errors
+    /// Returns an error if no device is connected or the characteristic is not available
+    pub async fn recv_data_with_service(&self, c: Uuid, service: Uuid) -> Result<Vec<u8>, Error> {
+        let dev = self.connected_dev.lock().await;
+        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
+        let state = self.state.lock().await;
+        let charac = state.get_charac_from_service(c, service)?;
         let data = dev.read(charac).await?;
         Ok(data)
     }
@@ -662,7 +696,7 @@ impl Handler {
     /// # Errors
     /// Returns an error if no device is connected or the characteristic is not available
     /// or if the subscribe operation fails
-    pub async fn subscribe_for_service(
+    pub async fn subscribe_with_service(
         &self,
         c: Uuid,
         service: Uuid,
