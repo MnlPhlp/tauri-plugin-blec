@@ -216,7 +216,7 @@ impl Handler {
     /// use tauri::async_runtime;
     /// async_runtime::block_on(async {
     ///    let handler = tauri_plugin_blec::get_handler().unwrap();
-    ///    handler.connect("00:00:00:00:00:00", (|| println!("disconnected")).into()).await.unwrap();
+    ///    handler.connect("00:00:00:00:00:00", (|| println!("disconnected")).into(), false).await.unwrap();
     /// });
     /// ```
     pub async fn connect(
@@ -423,7 +423,7 @@ impl Handler {
     /// async_runtime::block_on(async {
     ///     let handler = tauri_plugin_blec::get_handler().unwrap();
     ///     let (tx, mut rx) = mpsc::channel(1);
-    ///     handler.discover(Some(tx),1000, ScanFilter::None).await.unwrap();
+    ///     handler.discover(Some(tx),1000, ScanFilter::None, false).await.unwrap();
     ///     while let Some(devices) = rx.recv().await {
     ///         println!("Discovered {devices:?}");
     ///     }
@@ -589,7 +589,7 @@ impl Handler {
     /// async_runtime::block_on(async {
     ///     let handler = tauri_plugin_blec::get_handler().unwrap();
     ///     let data = [1,2,3,4,5];
-    ///     let response = handler.send_data(CHARACTERISTIC_UUID,&data, WriteType::WithResponse).await.unwrap();
+    ///     let response = handler.send_data(CHARACTERISTIC_UUID, None, &data, WriteType::WithResponse).await.unwrap();
     /// });
     /// ```
     pub async fn send_data(
@@ -624,7 +624,7 @@ impl Handler {
     /// const CHARACTERISTIC_UUID: Uuid = uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B");
     /// async_runtime::block_on(async {
     ///     let handler = tauri_plugin_blec::get_handler().unwrap();
-    ///     let response = handler.recv_data(CHARACTERISTIC_UUID).await.unwrap();
+    ///     let response = handler.recv_data(CHARACTERISTIC_UUID, None).await.unwrap();
     /// });
     /// ```
     pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
@@ -652,7 +652,7 @@ impl Handler {
     /// const CHARACTERISTIC_UUID: Uuid = uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B");
     /// async_runtime::block_on(async {
     ///     let handler = tauri_plugin_blec::get_handler().unwrap();
-    ///     let response = handler.subscribe(CHARACTERISTIC_UUID,|data| println!("received {data:?}")).await.unwrap();
+    ///     let response = handler.subscribe(CHARACTERISTIC_UUID, None, |data| println!("received {data:?}")).await.unwrap();
     /// });
     /// ```
     pub async fn subscribe(
