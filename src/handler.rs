@@ -276,13 +276,10 @@ impl Handler {
     async fn connect_services(&self, state: &mut HandlerState) -> Result<(), Error> {
         let device = self.connected_dev.lock().await;
         let device = device.as_ref().ok_or(Error::NoDeviceConnected)?;
+        debug!("starting service discovery");
+        device.discover_services().await?;
+        debug!("service discovery done");
         let mut services = device.services();
-        if services.is_empty() {
-            debug!("starting service discovery");
-            device.discover_services().await?;
-            debug!("service discovery done");
-            services = device.services();
-        }
         for s in services {
             for c in &s.characteristics {
                 state.characs.push(c.clone());
