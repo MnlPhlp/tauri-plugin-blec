@@ -190,6 +190,8 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         }
         val settings = ScanSettings.Builder()
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setLegacy(false)
             .build()
 
         scanCb = object: ScanCallback(){
