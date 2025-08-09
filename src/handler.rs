@@ -279,7 +279,8 @@ impl Handler {
         debug!("starting service discovery");
         device.discover_services().await?;
         debug!("service discovery done");
-        let mut services = device.services();
+        let services = device.services();
+        println!("{:?}", services);
         for s in services {
             for c in &s.characteristics {
                 state.characs.push(c.clone());
