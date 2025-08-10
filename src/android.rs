@@ -252,7 +252,7 @@ struct ReadParams {
 }
 
 #[async_trait::async_trait]
-impl btleplug::api::Peripheral for Peripheral {
+impl BondingPeripheral for Peripheral {
     async fn is_bonded(&self) -> Result<bool> {
         let res: BoolResult = get_handle()
             .run_mobile_plugin(
