@@ -344,17 +344,17 @@ impl btleplug::api::Peripheral for Peripheral {
         Ok(res.result)
     }
 
-    async fn is_bonded(&self) -> Result<bool> {
-        let res: BoolResult = get_handle()
-            .run_mobile_plugin(
-                "is_bonded",
-                ConnectParams {
-                    address: self.address,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
-        Ok(res.result)
-    }
+    // async fn is_bonded(&self) -> Result<bool> {
+    //     let res: BoolResult = get_handle()
+    //         .run_mobile_plugin(
+    //             "is_bonded",
+    //             ConnectParams {
+    //                 address: self.address,
+    //             },
+    //         )
+    //         .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+    //     Ok(res.result)
+    // }
 
     async fn connect(&self) -> Result<()> {
         call_plugin_with_timeout(
