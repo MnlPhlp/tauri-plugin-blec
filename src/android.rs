@@ -253,7 +253,7 @@ struct ReadParams {
 
 #[allow(dependency_on_unit_never_type_fallback)]
 #[async_trait::async_trait]
-impl BondingPeripheral for Peripheral {
+impl BondingPeripheral + btleplug::api::Peripheral for Peripheral {
     fn id(&self) -> PeripheralId {
         self.id.clone()
     }
