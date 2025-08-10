@@ -50,6 +50,7 @@ pub trait BondingPeripheral: btleplug::api::Peripheral {
 }
 
 // Default implementation for btleplug
+#[cfg(not(target_os = "android"))]
 impl<P: btleplug::api::Peripheral> BondingPeripheral for P {}
 
 impl BleDevice {
