@@ -27,6 +27,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info};
 use uuid::Uuid;
 
+mod models;
+
 type Result<T> = std::result::Result<T, btleplug::Error>;
 
 static HANDLE: OnceCell<PluginHandle<Wry>> = OnceCell::new();
@@ -251,7 +253,7 @@ struct ReadParams {
 
 #[allow(dependency_on_unit_never_type_fallback)]
 #[async_trait::async_trait]
-impl btleplug::api::Peripheral for Peripheral {
+impl BondingPeripheral for Peripheral {
     fn id(&self) -> PeripheralId {
         self.id.clone()
     }
