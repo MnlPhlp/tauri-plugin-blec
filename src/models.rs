@@ -40,8 +40,13 @@ impl PartialEq for BleDevice {
     }
 }
 
+#[async_trait::async_trait]
+trait BondingPeripheral: btleplug::api::Peripheral {
+    async fn is_bonded(&self) -> Result<bool> {}
+}
+
 impl BleDevice {
-    pub(crate) async fn from_peripheral<P: btleplug::api::Peripheral>(
+    pub(crate) async fn from_peripheral<P: BondingPeripheral>(
         peripheral: &P,
     ) -> Result<Self, error::Error> {
         #[cfg(target_vendor = "apple")]
@@ -60,8 +65,8 @@ impl BleDevice {
             services: properties.services,
             rssi: properties.rssi,
             is_connected: peripheral.is_connected().await?,
-            is_bonded: true,
-            // is_bonded: peripheral.is_bonded().await?,
+            // is_bonded: true,
+            is_bonded: peripheral.is_bonded().await?,
         })
     }
 }
