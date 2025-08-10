@@ -38,6 +38,7 @@ class BleDevice(
     private val name: String,
     private val rssi: Int,
     private val connected: Boolean,
+    private val bonded: Boolean,
     private val manufacturerData: SparseArray<ByteArray>?,
     private val serviceData: Map<ParcelUuid, ByteArray>?,
     private val services: List<ParcelUuid>?
@@ -50,6 +51,7 @@ class BleDevice(
         obj.put("id",address)
         obj.put("name",name)
         obj.put("connected",connected)
+        obj.put("bonded",bonded)
         obj.put("rssi",rssi)
         // create Json Array from services
         val services = if (services != null) {
@@ -208,11 +210,13 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                     name = ""
                 }
                 val connected = this@BleClient.manager!!.getConnectionState(result.device,BluetoothProfile.GATT_SERVER) == BluetoothProfile.STATE_CONNECTED
+                val bonded = result.device.getBondState() == BluetoothDevice.BOND_BONDED
                 val device = BleDevice(
                     result.device.address,
                     name,
                     result.rssi,
                     connected,
+                    bonded,
                     result.scanRecord?.manufacturerSpecificData,
                     result.scanRecord?.serviceData,
                     result.scanRecord?.serviceUuids

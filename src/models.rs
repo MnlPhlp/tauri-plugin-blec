@@ -13,6 +13,7 @@ pub struct BleDevice {
     pub address: String,
     pub name: String,
     pub is_connected: bool,
+    pub is_bonded: bool,
     pub manufacturer_data: HashMap<u16, Vec<u8>>,
     pub service_data: HashMap<Uuid, Vec<u8>>,
     pub services: Vec<Uuid>,
@@ -59,6 +60,7 @@ impl BleDevice {
             services: properties.services,
             rssi: properties.rssi,
             is_connected: peripheral.is_connected().await?,
+            is_bonded: false,
         })
     }
 }
