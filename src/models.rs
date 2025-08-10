@@ -60,7 +60,8 @@ impl BleDevice {
             services: properties.services,
             rssi: properties.rssi,
             is_connected: peripheral.is_connected().await?,
-            is_bonded: false,
+            is_bonded: true,
+            // is_bonded: peripheral.is_bonded().await?,
         })
     }
 }

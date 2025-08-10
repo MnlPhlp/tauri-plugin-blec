@@ -223,6 +223,10 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         return this.connected
     }
 
+    fun isBonded(): Boolean {
+        return this.device.bondState == BluetoothDevice.BOND_BONDED
+    }
+
     @SuppressLint("MissingPermission")
     fun disconnect(invoke: Invoke){
         this.gatt?.disconnect()
