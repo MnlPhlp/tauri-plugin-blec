@@ -24,6 +24,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     private val base64Encoder: Base64.Encoder = Base64.getEncoder()
 
     private var connected = false
+    private var bonded = false
     private var gatt: BluetoothGatt? = null
     private var services: List<BluetoothGattService> = listOf()
     private val characteristics: MutableMap<UUID,BluetoothGattCharacteristic> = mutableMapOf()
