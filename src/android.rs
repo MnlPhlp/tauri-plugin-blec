@@ -27,7 +27,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use crate::models;
+use crate::models::BondingPeripheral;
 
 type Result<T> = std::result::Result<T, btleplug::Error>;
 
