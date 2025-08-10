@@ -73,8 +73,10 @@ impl BleDevice {
             services: properties.services,
             rssi: properties.rssi,
             is_connected: peripheral.is_connected().await?,
-            // is_bonded: true,
+            #[cfg(target_os = "android")]
             is_bonded: peripheral.is_bonded().await?,
+            #[cfg(not(target_os = "android"))]
+            is_bonded: false,
         })
     }
 }
