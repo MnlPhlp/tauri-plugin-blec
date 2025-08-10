@@ -40,19 +40,16 @@ impl PartialEq for BleDevice {
     }
 }
 
-// #[cfg(target_os = "android")]
-// use crate::android::{Adapter, Manager, Peripheral};
-// #[cfg(not(target_os = "android"))]
-// use btleplug::platform::{Adapter, Manager, Peripheral};
-
 #[async_trait::async_trait]
 pub trait BondingPeripheral: btleplug::api::Peripheral {
     async fn is_bonded(&self) -> Result<bool, btleplug::Error> {
-        Ok(false) // Default implementation returns false
+        Err(btleplug::Error::NotSupported(
+            "Bonding is not implemented in btleplug".to_string(),
+        ))
     }
 }
 
-// Blanket implementation for all Peripheral types
+// Default implementation for btleplug
 impl<P: btleplug::api::Peripheral> BondingPeripheral for P {}
 
 impl BleDevice {
