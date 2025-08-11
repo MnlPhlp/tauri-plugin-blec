@@ -49,7 +49,7 @@
           "minimum": 1.0
         },
         "description": {
-          "description": "Human-readable description of what the permission does. Tauri convention is to use `<h4>` headings in markdown content for Tauri documentation generation purposes.",
+          "description": "Human-readable description of what the permission does. Tauri convention is to use <h4> headings in markdown content for Tauri documentation generation purposes.",
           "type": [
             "string",
             "null"
@@ -111,7 +111,7 @@
           "type": "string"
         },
         "description": {
-          "description": "Human-readable description of what the permission does. Tauri internal convention is to use `<h4>` headings in markdown content for Tauri documentation generation purposes.",
+          "description": "Human-readable description of what the permission does. Tauri internal convention is to use <h4> headings in markdown content for Tauri documentation generation purposes.",
           "type": [
             "string",
             "null"
@@ -297,188 +297,157 @@
         {
           "description": "Enables the check_permissions command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-check-permissions",
-          "markdownDescription": "Enables the check_permissions command without any pre-configured scope."
+          "const": "allow-check-permissions"
         },
         {
           "description": "Denies the check_permissions command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-check-permissions",
-          "markdownDescription": "Denies the check_permissions command without any pre-configured scope."
+          "const": "deny-check-permissions"
         },
         {
           "description": "Enables the connect command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-connect",
-          "markdownDescription": "Enables the connect command without any pre-configured scope."
+          "const": "allow-connect"
         },
         {
           "description": "Denies the connect command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-connect",
-          "markdownDescription": "Denies the connect command without any pre-configured scope."
+          "const": "deny-connect"
         },
         {
           "description": "Enables the connection_state command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-connection-state",
-          "markdownDescription": "Enables the connection_state command without any pre-configured scope."
+          "const": "allow-connection-state"
         },
         {
           "description": "Denies the connection_state command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-connection-state",
-          "markdownDescription": "Denies the connection_state command without any pre-configured scope."
+          "const": "deny-connection-state"
         },
         {
           "description": "Enables the disconnect command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-disconnect",
-          "markdownDescription": "Enables the disconnect command without any pre-configured scope."
+          "const": "allow-disconnect"
         },
         {
           "description": "Denies the disconnect command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-disconnect",
-          "markdownDescription": "Denies the disconnect command without any pre-configured scope."
+          "const": "deny-disconnect"
         },
         {
           "description": "Enables the ping command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-ping",
-          "markdownDescription": "Enables the ping command without any pre-configured scope."
+          "const": "allow-ping"
         },
         {
           "description": "Denies the ping command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-ping",
-          "markdownDescription": "Denies the ping command without any pre-configured scope."
+          "const": "deny-ping"
         },
         {
           "description": "Enables the recv command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-recv",
-          "markdownDescription": "Enables the recv command without any pre-configured scope."
+          "const": "allow-recv"
         },
         {
           "description": "Denies the recv command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-recv",
-          "markdownDescription": "Denies the recv command without any pre-configured scope."
+          "const": "deny-recv"
         },
         {
           "description": "Enables the recv_string command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-recv-string",
-          "markdownDescription": "Enables the recv_string command without any pre-configured scope."
+          "const": "allow-recv-string"
         },
         {
           "description": "Denies the recv_string command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-recv-string",
-          "markdownDescription": "Denies the recv_string command without any pre-configured scope."
+          "const": "deny-recv-string"
         },
         {
           "description": "Enables the scan command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-scan",
-          "markdownDescription": "Enables the scan command without any pre-configured scope."
+          "const": "allow-scan"
         },
         {
           "description": "Denies the scan command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-scan",
-          "markdownDescription": "Denies the scan command without any pre-configured scope."
+          "const": "deny-scan"
         },
         {
           "description": "Enables the scanning_state command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-scanning-state",
-          "markdownDescription": "Enables the scanning_state command without any pre-configured scope."
+          "const": "allow-scanning-state"
         },
         {
           "description": "Denies the scanning_state command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-scanning-state",
-          "markdownDescription": "Denies the scanning_state command without any pre-configured scope."
+          "const": "deny-scanning-state"
         },
         {
           "description": "Enables the send command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-send",
-          "markdownDescription": "Enables the send command without any pre-configured scope."
+          "const": "allow-send"
         },
         {
           "description": "Denies the send command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-send",
-          "markdownDescription": "Denies the send command without any pre-configured scope."
+          "const": "deny-send"
         },
         {
           "description": "Enables the send_string command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-send-string",
-          "markdownDescription": "Enables the send_string command without any pre-configured scope."
+          "const": "allow-send-string"
         },
         {
           "description": "Denies the send_string command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-send-string",
-          "markdownDescription": "Denies the send_string command without any pre-configured scope."
+          "const": "deny-send-string"
         },
         {
           "description": "Enables the stop_scan command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-stop-scan",
-          "markdownDescription": "Enables the stop_scan command without any pre-configured scope."
+          "const": "allow-stop-scan"
         },
         {
           "description": "Denies the stop_scan command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-stop-scan",
-          "markdownDescription": "Denies the stop_scan command without any pre-configured scope."
+          "const": "deny-stop-scan"
         },
         {
           "description": "Enables the subscribe command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-subscribe",
-          "markdownDescription": "Enables the subscribe command without any pre-configured scope."
+          "const": "allow-subscribe"
         },
         {
           "description": "Denies the subscribe command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-subscribe",
-          "markdownDescription": "Denies the subscribe command without any pre-configured scope."
+          "const": "deny-subscribe"
         },
         {
           "description": "Enables the subscribe_string command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-subscribe-string",
-          "markdownDescription": "Enables the subscribe_string command without any pre-configured scope."
+          "const": "allow-subscribe-string"
         },
         {
           "description": "Denies the subscribe_string command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-subscribe-string",
-          "markdownDescription": "Denies the subscribe_string command without any pre-configured scope."
+          "const": "deny-subscribe-string"
         },
         {
           "description": "Enables the unsubscribe command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-unsubscribe",
-          "markdownDescription": "Enables the unsubscribe command without any pre-configured scope."
+          "const": "allow-unsubscribe"
         },
         {
           "description": "Denies the unsubscribe command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-unsubscribe",
-          "markdownDescription": "Denies the unsubscribe command without any pre-configured scope."
+          "const": "deny-unsubscribe"
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`",
+          "description": "Default permissions for the plugin",
           "type": "string",
-          "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`"
+          "const": "default"
         }
       ]
     }
