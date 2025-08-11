@@ -79,6 +79,19 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     }
 
     @Command
+    fun is_bonded(invoke: Invoke){
+        val args = invoke.parseArgs(ConnectParams::class.java)
+        val device = this.devices[args.address]
+        val res = JSObject()
+        if (device == null){
+            res.put("result", false)
+        } else {
+            res.put("result", device.isBonded())
+        }
+        invoke.resolve(res)
+    }
+
+    @Command
     fun discover_services(invoke:Invoke){
         val args = invoke.parseArgs(ConnectParams::class.java)
         val device = this.connected_devices[args.address]

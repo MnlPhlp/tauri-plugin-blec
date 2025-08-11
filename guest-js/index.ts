@@ -5,6 +5,7 @@ export type BleDevice = {
   name: string;
   rssi: number;
   isConnected: boolean;
+  isBonded: boolean;
   services: string[];
   manufacturerData: Record<number, Uint8Array>;
   serviceData: Record<string, Uint8Array>;

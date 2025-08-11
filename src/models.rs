@@ -13,6 +13,7 @@ pub struct BleDevice {
     pub address: String,
     pub name: String,
     pub is_connected: bool,
+    pub is_bonded: bool,
     pub manufacturer_data: HashMap<u16, Vec<u8>>,
     pub service_data: HashMap<Uuid, Vec<u8>>,
     pub services: Vec<Uuid>,
@@ -39,8 +40,21 @@ impl PartialEq for BleDevice {
     }
 }
 
+#[async_trait::async_trait]
+pub trait BondingPeripheral: btleplug::api::Peripheral {
+    async fn is_bonded(&self) -> Result<bool, btleplug::Error> {
+        Err(btleplug::Error::NotSupported(
+            "Bonding is not implemented in btleplug".to_string(),
+        ))
+    }
+}
+
+// Default implementation for btleplug
+#[cfg(not(target_os = "android"))]
+impl<P: btleplug::api::Peripheral> BondingPeripheral for P {}
+
 impl BleDevice {
-    pub(crate) async fn from_peripheral<P: btleplug::api::Peripheral>(
+    pub(crate) async fn from_peripheral<P: BondingPeripheral>(
         peripheral: &P,
     ) -> Result<Self, error::Error> {
         #[cfg(target_vendor = "apple")]
@@ -59,6 +73,10 @@ impl BleDevice {
             services: properties.services,
             rssi: properties.rssi,
             is_connected: peripheral.is_connected().await?,
+            #[cfg(target_os = "android")]
+            is_bonded: peripheral.is_bonded().await?,
+            #[cfg(not(target_os = "android"))]
+            is_bonded: false,
         })
     }
 }

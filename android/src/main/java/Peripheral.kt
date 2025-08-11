@@ -24,6 +24,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     private val base64Encoder: Base64.Encoder = Base64.getEncoder()
 
     private var connected = false
+    private var bonded = false
     private var gatt: BluetoothGatt? = null
     private var services: List<BluetoothGattService> = listOf()
     private val characteristics: MutableMap<UUID,BluetoothGattCharacteristic> = mutableMapOf()
@@ -221,6 +222,10 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
 
     fun isConnected():Boolean {
         return this.connected
+    }
+
+    fun isBonded(): Boolean {
+        return this.device.bondState == BluetoothDevice.BOND_BONDED
     }
 
     @SuppressLint("MissingPermission")

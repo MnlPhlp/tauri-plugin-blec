@@ -27,6 +27,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info};
 use uuid::Uuid;
 
+use crate::models::BondingPeripheral;
+
 type Result<T> = std::result::Result<T, btleplug::Error>;
 
 static HANDLE: OnceCell<PluginHandle<Wry>> = OnceCell::new();
@@ -249,6 +251,20 @@ struct ReadParams {
     characteristic: Uuid,
 }
 
+#[async_trait::async_trait]
+impl BondingPeripheral for Peripheral {
+    async fn is_bonded(&self) -> Result<bool> {
+        let res: BoolResult = get_handle()
+            .run_mobile_plugin(
+                "is_bonded",
+                ConnectParams {
+                    address: self.address,
+                },
+            )
+            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        Ok(res.result)
+    }
+}
 #[allow(dependency_on_unit_never_type_fallback)]
 #[async_trait::async_trait]
 impl btleplug::api::Peripheral for Peripheral {
