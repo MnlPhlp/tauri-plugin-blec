@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "unsubscribe",
     "scanning_state",
     "check_permissions",
+    "list_services",
 ];
 
 fn main() {

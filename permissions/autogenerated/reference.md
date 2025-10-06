@@ -2,6 +2,8 @@
 
 Default permissions for the plugin
 
+#### This default permission set includes the following:
+
 - `allow-scan`
 - `allow-stop-scan`
 - `allow-connect`
@@ -15,6 +17,7 @@ Default permissions for the plugin
 - `allow-subscribe-string`
 - `allow-unsubscribe`
 - `allow-scanning-state`
+- `allow-list-services`
 
 ## Permission Table
 
@@ -132,12 +135,12 @@ Denies the disconnect command without any pre-configured scope.
 <tr>
 <td>
 
-`blec:allow-ping`
+`blec:allow-list-services`
 
 </td>
 <td>
 
-Enables the ping command without any pre-configured scope.
+Enables the list_services command without any pre-configured scope.
 
 </td>
 </tr>
@@ -145,12 +148,12 @@ Enables the ping command without any pre-configured scope.
 <tr>
 <td>
 
-`blec:deny-ping`
+`blec:deny-list-services`
 
 </td>
 <td>
 
-Denies the ping command without any pre-configured scope.
+Denies the list_services command without any pre-configured scope.
 
 </td>
 </tr>
