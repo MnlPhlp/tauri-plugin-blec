@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::get_handler;
-use crate::models::{BleDevice, ScanFilter, WriteType};
+use crate::models::{BleDevice, ScanFilter, Service, WriteType};
 
 #[command]
 pub(crate) async fn scan<R: Runtime>(
@@ -228,6 +228,19 @@ pub(crate) fn check_permissions() -> Result<bool> {
     crate::check_permissions()
 }
 
+#[command]
+pub(crate) async fn list_services<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    address: String,
+) -> Result<Vec<Service>> {
+    let handler = get_handler()?;
+    let services = handler
+        .discover_services(&address)
+        .await
+        .expect("Unable to discover services");
+    Ok(services)
+}
+
 pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
     tauri::generate_handler![
         scan,
@@ -243,6 +256,7 @@ pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
         subscribe_string,
         unsubscribe,
         scanning_state,
-        check_permissions
+        check_permissions,
+        list_services
     ]
 }
