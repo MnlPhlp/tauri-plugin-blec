@@ -52,11 +52,14 @@ pub fn get_handler() -> error::Result<&'static Handler> {
 }
 
 /// Checks if the app has the necessary permissions to use BLE.
+/// If `ask_if_denied` is true, the user will be prompted again to grant permissions if they
+/// previously denied.
 /// # Errors
 /// Returns an error if calling the android plugin fails.
-pub fn check_permissions() -> Result<bool, Error> {
+#[allow(unused)]
+pub fn check_permissions(ask_if_denied: bool) -> Result<bool, Error> {
     #[cfg(target_os = "android")]
-    return Ok(android::check_permissions()?);
+    return Ok(android::check_permissions(ask_if_denied)?);
     #[cfg(not(target_os = "android"))]
     return Ok(true);
 }

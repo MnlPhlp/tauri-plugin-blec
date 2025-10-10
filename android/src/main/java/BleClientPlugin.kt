@@ -187,9 +187,15 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         device.subscribe(invoke,false)
     }
 
+    @InvokeArg
+    class CheckPermissionsParams(){
+        val allowIbeacons: Boolean = false
+        val askIfDenied: Boolean = false
+    }
     @Command
     fun check_permissions(invoke: Invoke){
-        val granted = client.checkPermissions(false);
+        val args = invoke.parseArgs(CheckPermissionsParams::class.java)
+        val granted = client.checkPermissions(args.allowIbeacons, args.askIfDenied);
         val ret = JSObject();
         ret.put("result",granted)
         invoke.resolve(ret);

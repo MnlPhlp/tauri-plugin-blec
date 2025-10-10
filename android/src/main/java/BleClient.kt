@@ -104,7 +104,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
             .getBoolean(perm, true)
     }
 
-    public fun checkPermissions(allowIbeacons: Boolean): Boolean {
+    public fun checkPermissions(allowIbeacons: Boolean, askIfDenied: Boolean): Boolean {
 
         var permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -132,6 +132,10 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                     activity.requestPermissions(permissions, 1)
                     return false
                 } else{
+                    if (!askIfDenied) {
+                        return false
+                    }
+
                     // this will open settings which asks for permission
                     val intent = Intent(
                         Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -161,7 +165,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         }
         val args = invoke.parseArgs(ScanParams::class.java)
         // check permission
-        if (!checkPermissions(args.allowIbeacons)){
+        if (!checkPermissions(args.allowIbeacons, false)){
             invoke.reject("Missing permissions");
             return
         }

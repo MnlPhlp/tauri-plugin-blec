@@ -200,3 +200,11 @@ pub enum ScanFilter {
     /// that are 1 in the mask
     ManufacturerDataMasked(u16, Vec<u8>, Vec<u8>),
 }
+
+/// State of the Bluetooth adapter
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum AdapterState {
+    Unknown,
+    Off,
+    On,
+}

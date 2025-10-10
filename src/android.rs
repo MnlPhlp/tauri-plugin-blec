@@ -74,9 +74,15 @@ fn on_device_callback(response: InvokeResponseBody) -> std::result::Result<(), t
     Ok(())
 }
 
-pub fn check_permissions() -> std::result::Result<bool, tauri::plugin::mobile::PluginInvokeError> {
-    let result: BoolResult =
-        get_handle().run_mobile_plugin("check_permissions", serde_json::Value::Null)?;
+pub fn check_permissions(
+    ask_if_denied: bool,
+) -> std::result::Result<bool, tauri::plugin::mobile::PluginInvokeError> {
+    let result: BoolResult = get_handle().run_mobile_plugin(
+        "check_permissions",
+        serde_json::json!({
+            "askIfDenied": ask_if_denied
+        }),
+    )?;
     Ok(result.result)
 }
 
