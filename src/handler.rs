@@ -475,7 +475,10 @@ impl Handler {
                     }
                 }
             }
-            adapter.stop_scan().await.expect("failed to stop scan");
+            let _ = adapter
+                .stop_scan()
+                .await
+                .map_err(|e| error!("Failed to stop scan: {e}"));
             self.send_scan_update(false).await;
         }));
         Ok(())
