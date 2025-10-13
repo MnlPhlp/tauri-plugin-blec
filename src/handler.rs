@@ -1,8 +1,8 @@
 use crate::error::Error;
-use crate::models::{self, fmt_addr, BleDevice, ScanFilter, Service};
+use crate::models::{self, fmt_addr, AdapterState, BleDevice, ScanFilter, Service};
 use crate::ALLOW_IBEACONS;
-use btleplug::api::CentralEvent;
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _};
+use btleplug::api::{CentralEvent, CentralState};
 use btleplug::platform::PeripheralId;
 use futures::{Stream, StreamExt};
 use std::collections::HashMap;
@@ -225,7 +225,7 @@ impl Handler {
         on_disconnect: OnDisconnectHandler,
         allow_ibeacons: bool,
     ) -> Result<(), Error> {
-        if self.devices.lock().await.len() == 0 {
+        if self.devices.lock().await.is_empty() {
             self.discover(None, 1000, ScanFilter::None, allow_ibeacons)
                 .await?;
         }
@@ -280,7 +280,6 @@ impl Handler {
         device.discover_services().await?;
         debug!("service discovery done");
         let services = device.services();
-        println!("{:?}", services);
         for s in services {
             for c in &s.characteristics {
                 state.characs.push(c.clone());
@@ -764,6 +763,20 @@ impl Handler {
             if let Err(e) = t.send(state).await {
                 warn!("Failed to send scan update: {e}");
                 remove.push(i);
+            }
+        }
+    }
+
+    pub async fn get_adapter_state(&self) -> AdapterState {
+        match self.adapter.adapter_state().await {
+            Ok(state) => match state {
+                CentralState::Unknown => AdapterState::Unknown,
+                CentralState::PoweredOn => AdapterState::On,
+                CentralState::PoweredOff => AdapterState::Off,
+            },
+            Err(e) => {
+                error!("Failed to get adapter state: {e}");
+                AdapterState::Unknown
             }
         }
     }

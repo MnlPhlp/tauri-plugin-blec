@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // This starter template is using Vue 3 <script setup> SFCs
 // Check out https://vuejs.org/api/sfc-script-setup.html#script-setup
-import { BleDevice, getConnectionUpdates, startScan, sendString, readString, unsubscribe, subscribeString, stopScan, connect, disconnect, getScanningUpdates } from '@mnlphlp/plugin-blec'
+import { BleDevice, getConnectionUpdates, startScan, sendString, readString, unsubscribe, subscribeString, stopScan, connect, disconnect, getScanningUpdates, AdapterState, getAdapterState, checkPermissions } from '@mnlphlp/plugin-blec'
 import { onMounted, ref } from 'vue';
 import BleDev from './components/BleDev.vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -46,12 +46,32 @@ async function test() {
   }
 }
 
+async function checkState() {
+  adapterState.value = await getAdapterState();
+}
+
+async function checkPermission(askIfDenied = true) {
+  permmissionsGranted.value = await checkPermissions(askIfDenied);
+}
+
 const showServices = ref(false);
+const adapterState = ref<AdapterState>('Unknown');
+const permmissionsGranted = ref(false);
 </script>
 
 <template>
   <div class="container">
     <h1>Welcome to the blec plugin!</h1>
+
+    <div class="row">
+      <button @click=checkState()>Check State</button>
+      <span>{{ adapterState }}</span>
+    </div>
+    <div class="row">
+      <button @click="()=>checkPermission(true)">Check Permission (asking if denied)</button>
+      <button @click="()=>checkPermission(false)">Check Permission (NOT asking if denied)</button>
+      <span>{{ permmissionsGranted }}</span>
+    </div>
 
     <button v-if="scanning" :onclick="stopScan" style="margin-bottom: 5px;">
       Stop Scan
@@ -62,7 +82,7 @@ const showServices = ref(false);
         <div></div>
       </div>
     </button>
-    <div v-else>
+    <div v-else class="row">
       <button :onclick="() => startScan((dev: BleDevice[]) => devices = dev, 10000)" style="margin-bottom: 5px;">
         Start Scan
       </button>
@@ -158,6 +178,8 @@ const showServices = ref(false);
   display: flex;
   justify-content: center;
   margin-bottom: 5px;
+  align-items: center;
+  gap: 10px;
 }
 
 .ml {

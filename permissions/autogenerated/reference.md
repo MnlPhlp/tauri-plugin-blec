@@ -2,8 +2,6 @@
 
 Default permissions for the plugin
 
-#### This default permission set includes the following:
-
 - `allow-scan`
 - `allow-stop-scan`
 - `allow-connect`
@@ -18,6 +16,8 @@ Default permissions for the plugin
 - `allow-unsubscribe`
 - `allow-scanning-state`
 - `allow-list-services`
+- `allow-check-permissions`
+- `allow-get-adapter-state`
 
 ## Permission Table
 
@@ -128,6 +128,32 @@ Enables the disconnect command without any pre-configured scope.
 <td>
 
 Denies the disconnect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-get-adapter-state`
+
+</td>
+<td>
+
+Enables the get_adapter_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-get-adapter-state`
+
+</td>
+<td>
+
+Denies the get_adapter_state command without any pre-configured scope.
 
 </td>
 </tr>

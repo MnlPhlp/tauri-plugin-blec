@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "scanning_state",
     "check_permissions",
     "list_services",
+    "get_adapter_state",
 ];
 
 fn main() {

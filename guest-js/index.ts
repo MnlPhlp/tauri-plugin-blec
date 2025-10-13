@@ -7,8 +7,8 @@ export type BleDevice = {
   isConnected: boolean;
   isBonded: boolean;
   services: string[];
-  manufacturerData: Record<number, Uint8Array>;
-  serviceData: Record<string, Uint8Array>;
+  manufacturerData: Record<number, number[]>;
+  serviceData: Record<string, number[]>;
 };
 
 export type BleCharacteristic = {
@@ -21,6 +21,16 @@ export type BleService = {
   uuid: string;
   characteristics: BleCharacteristic[];
 };
+
+export type AdapterState = "Unknown" | "On" | "Off";
+
+/**
+ * Get the current state of the BLE adapter (on/off)
+ */
+export async function getAdapterState(): Promise<AdapterState> {
+  let state = await invoke<AdapterState>("plugin:blec|get_adapter_state");
+  return state;
+}
 
 /**
  * Scan for BLE devices
@@ -53,10 +63,11 @@ export async function stopScan() {
 
 /**
  * Check if necessary permissions are granted
+ * @ param askIfDenied - If true, will ask the user for permissions again, if they were denied before
  * @returns true if permissions are granted, false otherwise
  */
-export async function checkPermissions(): Promise<boolean> {
-  return await invoke<boolean>("plugin:blec|check_permissions");
+export async function checkPermissions(askIfDenied = true): Promise<boolean> {
+  return await invoke<boolean>("plugin:blec|check_permissions", { askIfDenied });
 }
 
 /**
@@ -108,13 +119,13 @@ export async function connect(
 }
 
 /**
- * Write a Uint8Array to a BLE characteristic
+ * Write a byte array to a BLE characteristic
  * @param characteristic UUID of the characteristic to write to
  * @param data Data to write to the characteristic
  */
 export async function send(
   characteristic: string,
-  data: Uint8Array,
+  data: number[],
   writeType: "withResponse" | "withoutResponse" = "withResponse",
   service?: string
 ) {
@@ -152,8 +163,8 @@ export async function sendString(
 export async function read(
   characteristic: string,
   service?: string
-): Promise<Uint8Array> {
-  let res = await invoke<Uint8Array>("plugin:blec|recv", {
+): Promise<number[]> {
+  let res = await invoke<number[]>("plugin:blec|recv", {
     characteristic,
     service,
   });
@@ -192,9 +203,9 @@ export async function unsubscribe(characteristic: string) {
  */
 export async function subscribe(
   characteristic: string,
-  handler: (data: Uint8Array) => void
+  handler: (data: number[]) => void
 ) {
-  let onData = new Channel<Uint8Array>();
+  let onData = new Channel<number[]>();
   onData.onmessage = handler;
   await invoke("plugin:blec|subscribe", {
     characteristic,

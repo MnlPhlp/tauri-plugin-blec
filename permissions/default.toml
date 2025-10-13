@@ -1,3 +1,3 @@
 [default]
 description = "Default permissions for the plugin"
-permissions = ["allow-scan","allow-stop-scan","allow-connect","allow-disconnect","allow-connection-state","allow-send","allow-recv","allow-send-string","allow-recv-string","allow-subscribe","allow-subscribe-string","allow-unsubscribe","allow-scanning-state","allow-list-services"]
+permissions = ["allow-scan","allow-stop-scan","allow-connect","allow-disconnect","allow-connection-state","allow-send","allow-recv","allow-send-string","allow-recv-string","allow-subscribe","allow-subscribe-string","allow-unsubscribe","allow-scanning-state","allow-list-services", "allow-check-permissions", "allow-get-adapter-state"]

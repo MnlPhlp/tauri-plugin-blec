@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::get_handler;
-use crate::models::{BleDevice, ScanFilter, Service, WriteType};
+use crate::models::{AdapterState, BleDevice, ScanFilter, Service, WriteType};
 
 #[command]
 pub(crate) async fn scan<R: Runtime>(
@@ -224,8 +224,11 @@ pub(crate) async fn unsubscribe<R: Runtime>(
 }
 
 #[command]
-pub(crate) fn check_permissions() -> Result<bool> {
-    crate::check_permissions()
+pub(crate) fn check_permissions(
+    _app: AppHandle<impl Runtime>,
+    ask_if_denied: bool,
+) -> Result<bool> {
+    crate::check_permissions(ask_if_denied)
 }
 
 #[command]
@@ -239,6 +242,13 @@ pub(crate) async fn list_services<R: Runtime>(
         .await
         .expect("Unable to discover services");
     Ok(services)
+}
+
+#[command]
+pub(crate) async fn get_adapter_state<R: Runtime>(_app: AppHandle<R>) -> Result<AdapterState> {
+    let handler = get_handler()?;
+    let state = handler.get_adapter_state().await;
+    Ok(state)
 }
 
 pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
@@ -257,6 +267,7 @@ pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
         unsubscribe,
         scanning_state,
         check_permissions,
-        list_services
+        list_services,
+        get_adapter_state
     ]
 }
