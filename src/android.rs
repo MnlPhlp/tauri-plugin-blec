@@ -161,7 +161,18 @@ impl btleplug::api::Central for Adapter {
     }
 
     async fn adapter_state(&self) -> Result<CentralState> {
-        todo!()
+        let res: StringResult = get_handle()
+            .run_mobile_plugin("adapter_state", serde_json::Value::Null)
+            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        match res.result.as_str() {
+            "unknown" => Ok(CentralState::Unknown),
+            "off" => Ok(CentralState::PoweredOff),
+            "on" => Ok(CentralState::PoweredOn),
+            _ => Err(btleplug::Error::RuntimeError(format!(
+                "unknown adapter state: {}",
+                res.result
+            ))),
+        }
     }
 }
 
@@ -248,6 +259,11 @@ struct MtuResponse {
 #[derive(serde::Deserialize)]
 struct BoolResult {
     result: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct StringResult {
+    result: String,
 }
 
 #[derive(serde::Serialize)]

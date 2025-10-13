@@ -216,4 +216,9 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         }
         device.requestMtu(invoke, args.mtu)
     }
+
+    @Command
+    fun adapter_state(invoke: Invoke){
+        client.adapterState(invoke);
+    }
 }

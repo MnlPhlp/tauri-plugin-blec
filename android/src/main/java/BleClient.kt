@@ -255,4 +255,27 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         }
         invoke.resolve()
     }
+
+    fun adapterState(invoke: Invoke) {
+        val response = JSObject()
+        manager = getSystemService(activity, BluetoothManager::class.java)
+        if (manager == null){
+            response.put("result","unknown")
+        } else {
+            val adapter = manager?.adapter
+            if (adapter == null){
+                response.put("result","unknown")
+            } else {
+                // check if bluetooth is on
+                if (adapter.isEnabled ) {
+                    response.put("result","on")
+                } else {
+                    response.put("result","off")
+                }
+            }
+        }
+
+        invoke.resolve(response)
+        return
+    }
 }
