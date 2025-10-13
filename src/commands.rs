@@ -20,9 +20,10 @@ pub(crate) async fn scan<R: Runtime>(
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     async_runtime::spawn(async move {
         while let Some(devices) = rx.recv().await {
-            on_devices
-                .send(devices)
-                .expect("failed to send device to the front-end");
+            if let Err(e) = on_devices.send(devices) {
+                warn!("Failed to send devices to the front-end: {e}");
+                return;
+            }
         }
     });
     handler
@@ -49,9 +50,9 @@ pub(crate) async fn connect<R: Runtime>(
     tracing::info!("Connecting to BLE device: {:?}", address);
     let handler = get_handler()?;
     let disconnct_handler = move || {
-        on_disconnect
-            .send(())
-            .expect("failed to send disconnect event to the front-end");
+        if let Err(e) = on_disconnect.send(()) {
+            warn!("Failed to send disconnect event to the front-end: {e}");
+        }
     };
     handler
         .connect(&address, disconnct_handler.into(), allow_ibeacons)
@@ -75,15 +76,15 @@ pub(crate) async fn connection_state<R: Runtime>(
     let handler = get_handler()?;
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     handler.set_connection_update_channel(tx).await;
-    update
-        .send(handler.is_connected())
-        .expect("failed to send connection state");
+    if let Err(e) = update.send(handler.is_connected()) {
+        warn!("Failed to send connection state to the front-end: {e}");
+    }
     async_runtime::spawn(async move {
         while let Some(connected) = rx.recv().await {
-            debug!("Sending connection update to frontend: {connected}");
-            update
-                .send(connected)
-                .expect("failed to send connection state to the front-end");
+            if let Err(e) = update.send(connected) {
+                warn!("Failed to send connection state to the front-end: {e}");
+                return;
+            }
         }
         warn!("Connection state channel closed");
     });
@@ -98,14 +99,15 @@ pub(crate) async fn scanning_state<R: Runtime>(
     let handler = get_handler()?;
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     handler.set_scanning_update_channel(tx).await;
-    update
-        .send(handler.is_scanning().await)
-        .expect("failed to send scanning state");
+    if let Err(e) = update.send(handler.is_scanning().await) {
+        warn!("failed to send scanning state to the front-end: {e}");
+    }
     async_runtime::spawn(async move {
         while let Some(scanning) = rx.recv().await {
-            update
-                .send(scanning)
-                .expect("failed to send scanning state to the front-end");
+            if let Err(e) = update.send(scanning) {
+                warn!("failed to send scanning state to the front-end: {e}");
+                return;
+            }
         }
     });
     Ok(())
