@@ -190,9 +190,10 @@ export async function readString(
  * Unsubscribe from a BLE characteristic
  * @param characteristic UUID of the characteristic to unsubscribe from
  */
-export async function unsubscribe(characteristic: string) {
+export async function unsubscribe(characteristic: string, service?: string) {
   await invoke("plugin:blec|unsubscribe", {
     characteristic,
+    service
   });
 }
 
@@ -203,12 +204,14 @@ export async function unsubscribe(characteristic: string) {
  */
 export async function subscribe(
   characteristic: string,
+  service: string | null,
   handler: (data: number[]) => void
 ) {
   let onData = new Channel<number[]>();
   onData.onmessage = handler;
   await invoke("plugin:blec|subscribe", {
     characteristic,
+    service,
     onData,
   });
 }
@@ -220,12 +223,14 @@ export async function subscribe(
  */
 export async function subscribeString(
   characteristic: string,
+  service: string | null,
   handler: (data: string) => void
 ) {
   let onData = new Channel<string>();
   onData.onmessage = handler;
   await invoke("plugin:blec|subscribe_string", {
     characteristic,
+    service,
     onData,
   });
 }

@@ -1,7 +1,7 @@
 use tauri::ipc::Channel;
 use tauri::{async_runtime, command, AppHandle, Runtime};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::error::Result;

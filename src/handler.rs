@@ -38,11 +38,13 @@ struct HandlerState {
 
 impl HandlerState {
     fn get_charac(&self, uuid: Uuid) -> Result<&Characteristic, Error> {
+        info!("getting characteristic {uuid}");
         let charac = self.characs.iter().find(|c| c.uuid == uuid);
         charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
     }
 
     fn get_charac_from_service(&self, uuid: Uuid, service: Uuid) -> Result<&Characteristic, Error> {
+        info!("getting characteristic {uuid} from service {service}");
         let charac = self
             .characs
             .iter()
@@ -669,7 +671,9 @@ impl Handler {
         } else {
             state.get_charac(c)?
         };
+        info!("subscribing to characteristic {charac:?}");
         dev.subscribe(charac).await?;
+        info!("subscribed successfully");
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,
             service: charac.service_uuid,
@@ -867,8 +871,9 @@ async fn listen_notify(dev: Option<Peripheral>, listeners: Arc<Mutex<Vec<Listene
         .expect("failed to get notifications stream");
     let mut handles: HashMap<Uuid, tokio::task::JoinHandle<()>> = HashMap::new();
     while let Some(data) = stream.next().await {
+        info!("notification received: {data:?}");
         for l in listeners.lock().await.iter() {
-            if l.uuid == data.uuid {
+            if l.uuid == data.uuid && l.service == data.service_uuid {
                 let cb = l.callback.clone();
                 // wait for running callback first
                 if let Some(handle) = handles.remove(&l.uuid) {

@@ -27,7 +27,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     private var bonded = false
     private var gatt: BluetoothGatt? = null
     private var services: List<BluetoothGattService> = listOf()
-    private val characteristics: MutableMap<UUID,BluetoothGattCharacteristic> = mutableMapOf()
+    private val characteristics: MutableMap<Pair<UUID,UUID>,BluetoothGattCharacteristic> = mutableMapOf()
     private var onConnectionStateChange: ((connected:Boolean,error:String)->Unit)? = null
     private var onServicesDiscovered: ((connected:Boolean,error:String)->Unit)? = null
     private var notifyChannel:Channel? = null
@@ -87,7 +87,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 this@Peripheral.services = gatt.services
                 for (s in gatt.services) {
                     for (c in s.characteristics) {
-                        this@Peripheral.characteristics[c.uuid] = c
+                        this@Peripheral.characteristics[Pair(c.uuid,c.service.uuid)] = c
                     }
                 }
                 this@Peripheral.onServicesDiscovered?.invoke(true, "")
@@ -103,6 +103,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 synchronized(it) {
                     val notification = JSObject();
                     notification.put("uuid", characteristic.uuid)
+                    notification.put("serviceUuid", characteristic.service.uuid)
                     notification.put("data", base64Encoder.encodeToString(value))
                     it.send(notification)
                 }
@@ -224,6 +225,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         return this.connected
     }
 
+    @SuppressLint("MissingPermission")
     fun isBonded(): Boolean {
         return this.device.bondState == BluetoothDevice.BOND_BONDED
     }
@@ -305,7 +307,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             invoke.reject("No gatt server connected")
             return
         }
-        val charac = this.characteristics[args.characteristic!!]
+        val charac = this.characteristics[Pair(args.characteristic!!,args.service!!)]
         if (charac == null){
             invoke.reject("Characterisitc ${args.characteristic} not found")
             return
@@ -340,7 +342,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             }
             this.onReadInvoke[args.characteristic] = invoke
         }
-        val charac = this.characteristics[args.characteristic!!]
+        val charac = this.characteristics[Pair(args.characteristic!!,args.service!!)]
         if (charac == null){
             invoke.reject("Characteristic ${args.characteristic} not found")
             return
@@ -356,7 +358,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             invoke.reject("No gatt server connected")
             return
         }
-        val charac = this.characteristics[args.characteristic!!]
+        val charac = this.characteristics[Pair(args.characteristic!!,args.service!!)]
         if (charac == null){
             invoke.reject("Characteristic ${args.characteristic} not found")
             return

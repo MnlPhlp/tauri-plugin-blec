@@ -1,6 +1,7 @@
 use tracing::info;
 use uuid::{uuid, Uuid};
 
+const SERVICE_UUID: uuid::Uuid = uuid::uuid!("A07498CA-AD5B-474E-940D-16F1FBE7E8CD");
 const CHARACTERISTIC_UUID: Uuid = uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B");
 
 // command to test the BLE communication from rust
@@ -18,7 +19,10 @@ async fn test() -> bool {
         )
         .await
         .unwrap();
-    let response = handler.recv_data(CHARACTERISTIC_UUID, None).await.unwrap();
+    let response = handler
+        .recv_data(CHARACTERISTIC_UUID, Some(SERVICE_UUID))
+        .await
+        .unwrap();
     let time = start.elapsed();
     info!("Time elapsed: {:?}", time);
     assert_eq!(response, DATA);

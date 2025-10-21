@@ -135,6 +135,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     class WriteParams() {
         val address: String = ""
         val characteristic: UUID? = null
+        val service: UUID? = null
         val data: ByteArray? = null
         val withResponse: Boolean = true
     }
@@ -153,6 +154,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     class ReadParams(){
         val address: String = ""
         val characteristic: UUID? = null
+        val service: UUID? = null
     }
     @Command
     fun read(invoke: Invoke){

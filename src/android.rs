@@ -271,6 +271,7 @@ struct StringResult {
 struct ReadParams {
     address: BDAddr,
     characteristic: Uuid,
+    service: Uuid,
 }
 
 #[async_trait::async_trait]
@@ -439,6 +440,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 serde_json::json!({
                     "address": self.address,
                     "characteristic": characteristic.uuid,
+                    "service": characteristic.service_uuid,
                     "data": data,
                     "withResponse": matches!(write_type, WriteType::WithResponse),
                 }),
@@ -459,6 +461,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 ReadParams {
                     address: self.address,
                     characteristic: characteristic.uuid,
+                    service: characteristic.service_uuid,
                 },
             )
             .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
@@ -473,6 +476,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 ReadParams {
                     address: self.address,
                     characteristic: characteristic.uuid,
+                    service: characteristic.service_uuid,
                 },
             )
             .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
@@ -486,6 +490,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 ReadParams {
                     address: self.address,
                     characteristic: characteristic.uuid,
+                    service: characteristic.service_uuid,
                 },
             )
             .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
@@ -497,6 +502,7 @@ impl btleplug::api::Peripheral for Peripheral {
         #[serde(rename_all = "camelCase")]
         struct Notification {
             uuid: Uuid,
+            service_uuid: Uuid,
             #[serde(deserialize_with = "deserialize_base64")]
             data: Vec<u8>,
         }
@@ -513,6 +519,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 Ok(notification) => tx
                     .blocking_send(ValueNotification {
                         uuid: notification.uuid,
+                        service_uuid: notification.service_uuid,
                         value: notification.data,
                     })
                     .expect("failed to send notification"),

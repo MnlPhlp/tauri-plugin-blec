@@ -56,7 +56,7 @@ class BleDevice(
         obj.put("rssi",rssi)
         // create Json Array from services
         val services = if (services != null) {
-            val arr = JSArray();
+            val arr = JSArray()
             for (service in services){
                 arr.put(service)
             }
@@ -89,9 +89,9 @@ class BleDevice(
 }
 
 class BleClient(private val activity: Activity, private val plugin: BleClientPlugin) {
-    private var scanner: BluetoothLeScanner? = null;
-    private var manager: BluetoothManager? = null;
-    private var scanCb: ScanCallback? = null;
+    private var scanner: BluetoothLeScanner? = null
+    private var manager: BluetoothManager? = null
+    private var scanCb: ScanCallback? = null
 
     private fun markFirstPermissionRequest(perm: String) {
         val sharedPreference: SharedPreferences =
@@ -104,7 +104,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
             .getBoolean(perm, true)
     }
 
-    public fun checkPermissions(allowIbeacons: Boolean, askIfDenied: Boolean): Boolean {
+    fun checkPermissions(allowIbeacons: Boolean, askIfDenied: Boolean): Boolean {
 
         var permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -116,7 +116,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                 Manifest.permission.BLUETOOTH_ADMIN,
                 Manifest.permission.BLUETOOTH,
             )
-        };
+        }
         if (allowIbeacons) {
             permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
@@ -166,7 +166,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         val args = invoke.parseArgs(ScanParams::class.java)
         // check permission
         if (!checkPermissions(args.allowIbeacons, false)){
-            invoke.reject("Missing permissions");
+            invoke.reject("Missing permissions")
             return
         }
 
@@ -207,7 +207,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                     result.device.alias
                 } else {
                     result.device.name
-                };
+                }
                 if (name==null){
                     name = result.scanRecord?.deviceName
                 }

@@ -19,21 +19,35 @@ onMounted(async () => {
   })
 })
 
-// const SERVICE_UUID = 'A07498CA-AD5B-474E-940D-16F1FBE7E8CD'
+const SERVICE_UUID = 'A07498CA-AD5B-474E-940D-16F1FBE7E8CD';
+const SERVICE2_UUID = 'A07498CA-AD5B-474E-940D-16F1FBE7E8CE';
 const CHARACTERISTIC_UUID = '51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B'
 
 const sendData = ref('')
 const recvData = ref('')
 const rustTest = ref(false)
 
+const sendData2 = ref('')
+const recvData2 = ref('')
+
 
 const notifyData = ref('')
 async function subscribe() {
   if (notifyData.value) {
-    unsubscribe(CHARACTERISTIC_UUID)
+    unsubscribe(CHARACTERISTIC_UUID,SERVICE_UUID)
     notifyData.value = ''
   } else {
-    subscribeString(CHARACTERISTIC_UUID, (data: string) => notifyData.value = data)
+    subscribeString(CHARACTERISTIC_UUID, SERVICE_UUID, (data: string) => notifyData.value = data)
+  }
+}
+
+const notifyData2 = ref('')
+async function subscribe2() {
+  if (notifyData2.value) {
+    unsubscribe(CHARACTERISTIC_UUID,SERVICE2_UUID)
+    notifyData2.value = ''
+  } else {
+    subscribeString(CHARACTERISTIC_UUID, SERVICE2_UUID, (data: string) => notifyData2.value = data)
   }
 }
 
@@ -102,28 +116,41 @@ const permmissionsGranted = ref(false);
       </div>
       <div class="row">
         <input v-model="sendData" placeholder="Send data" />
-        <button class="ml" :onclick="() => sendString(CHARACTERISTIC_UUID, sendData)">Send</button>
+        <button class="ml"
+          :onclick="() => sendString(CHARACTERISTIC_UUID, sendData, 'withResponse', SERVICE_UUID)">Send</button>
       </div>
       <div class="row">
         <input v-model="recvData" readonly />
-        <button class="ml" :onclick="async () => recvData = await readString(CHARACTERISTIC_UUID)">Read</button>
+        <button class="ml"
+          :onclick="async () => recvData = await readString(CHARACTERISTIC_UUID, SERVICE_UUID)">Read</button>
       </div>
       <div class="row">
         <input v-model="notifyData" readonly />
         <button class="ml" :onclick="subscribe">{{ notifyData ? "Unsubscribe" : "Subscribe" }}</button>
+      </div>
+      <div class="row" style="margin-top: 30px;">
+        <input v-model="sendData2" placeholder="Send data service 2" />
+        <button class="ml"
+          :onclick="() => sendString(CHARACTERISTIC_UUID, sendData2, 'withResponse', SERVICE2_UUID)">Send (Service 2)</button>
+      </div>
+      <div class="row">
+        <input v-model="recvData2" readonly />
+        <button class="ml"
+          :onclick="async () => recvData2 = await readString(CHARACTERISTIC_UUID, SERVICE2_UUID)">Read (Service 2)</button>
+      </div>
+      <div class="row">
+        <input v-model="notifyData2" readonly />
+        <button class="ml" :onclick="subscribe2">{{ notifyData2 ? "Unsubscribe (Service 2)" : "Subscribe (Service 2)" }}</button>
       </div>
     </div>
     <div v-else>
       <label id="show-services-label" for="show-services">Show Services</label>
       <input v-model="showServices" type="checkbox" id="show-services" />
       <div v-for="device in devices" class="row">
-        <BleDev :key="device.address" :device="device"
-          :show-services="showServices" 
-          :onclick="async () => {
+        <BleDev :key="device.address" :device="device" :show-services="showServices" :onclick="async () => {
             await connect(device.address, () => console.log('disconnected'));
             console.log('connect command returned');
-          }"
-        />
+          }" />
       </div>
     </div>
   </div>
