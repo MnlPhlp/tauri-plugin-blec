@@ -601,16 +601,21 @@ impl Handler {
         data: &[u8],
         write_type: models::WriteType,
     ) -> Result<(), Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = if let Some(service) = service {
-            state.get_charac_from_service(c, service)?
-        } else {
-            state.get_charac(c)?
+        // Acquire locks and clone before awaiting
+        let dev = {
+            let dev_guard = self.connected_dev.lock().await;
+            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+        };
+        let charac = {
+            let state = self.state.lock().await;
+            if let Some(service) = service {
+                state.get_charac_from_service(c, service)?.clone()
+            } else {
+                state.get_charac(c)?.clone()
+            }
         };
 
-        dev.write(charac, data, write_type.into()).await?;
+        dev.write(&charac, data, write_type.into()).await?;
         Ok(())
     }
 
@@ -630,15 +635,19 @@ impl Handler {
     /// });
     /// ```
     pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = if let Some(service) = service {
-            state.get_charac_from_service(c, service)?
-        } else {
-            state.get_charac(c)?
+        let dev = {
+            let dev_guard = self.connected_dev.lock().await;
+            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
         };
-        let data = dev.read(charac).await?;
+        let charac = {
+            let state = self.state.lock().await;
+            if let Some(service) = service {
+                state.get_charac_from_service(c, service)?.clone()
+            } else {
+                state.get_charac(c)?.clone()
+            }
+        };
+        let data = dev.read(&charac).await?;
         Ok(data)
     }
 
@@ -663,16 +672,20 @@ impl Handler {
         service: Option<Uuid>,
         callback: impl Into<SubscriptionHandler>,
     ) -> Result<(), Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = if let Some(service) = service {
-            state.get_charac_from_service(c, service)?
-        } else {
-            state.get_charac(c)?
+        let dev = {
+            let dev_guard = self.connected_dev.lock().await;
+            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+        };
+        let charac = {
+            let state = self.state.lock().await;
+            if let Some(service) = service {
+                state.get_charac_from_service(c, service)?.clone()
+            } else {
+                state.get_charac(c)?.clone()
+            }
         };
         info!("subscribing to characteristic {charac:?}");
-        dev.subscribe(charac).await?;
+        dev.subscribe(&charac).await?;
         info!("subscribed successfully");
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,
@@ -688,11 +701,15 @@ impl Handler {
     /// Returns an error if no device is connected or the characteristic is not available
     /// or if the unsubscribe operation fails
     pub async fn unsubscribe(&self, c: Uuid) -> Result<(), Error> {
-        let dev = self.connected_dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let state = self.state.lock().await;
-        let charac = state.get_charac(c)?;
-        dev.unsubscribe(charac).await?;
+        let dev = {
+            let dev_guard = self.connected_dev.lock().await;
+            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+        };
+        let charac = {
+            let state = self.state.lock().await;
+            state.get_charac(c)?.clone()
+        };
+        dev.unsubscribe(&charac).await?;
         let mut listeners = self.notify_listeners.lock().await;
         listeners.retain(|l| l.uuid != charac.uuid);
         Ok(())
