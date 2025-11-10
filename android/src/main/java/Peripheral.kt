@@ -280,7 +280,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             for (charac in service.characteristics){
                 characs.add(ResCharacteristic(
                     charac.uuid.toString(),
-                    0,
+                    charac.properties,
                     charac.descriptors.map { desc ->  desc.uuid.toString()},
                 ))
             }
