@@ -18,6 +18,7 @@ pub struct BleDevice {
     pub service_data: HashMap<Uuid, Vec<u8>>,
     pub services: Vec<Uuid>,
     pub rssi: Option<i16>,
+    pub tx_power_level: Option<i16>,
 }
 
 impl Eq for BleDevice {}
@@ -77,6 +78,7 @@ impl BleDevice {
             is_bonded: peripheral.is_bonded().await?,
             #[cfg(not(target_os = "android"))]
             is_bonded: false,
+            tx_power_level: properties.tx_power_level,
         })
     }
 }
