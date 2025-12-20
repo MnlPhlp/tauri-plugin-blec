@@ -24,15 +24,12 @@ pub static ALLOW_IBEACONS: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(f
 
 static HANDLER: OnceCell<Handler> = OnceCell::new();
 
-/// Initializes the plugin.
-/// # Panics
-/// Panics if the handler cannot be initialized.
-pub fn init() -> TauriPlugin<Wry> {
-    let handler = async_runtime::block_on(Handler::new()).expect("failed to initialize handler");
+pub fn try_init() -> Result<TauriPlugin<Wry>, Error> {
+    let handler = async_runtime::block_on(Handler::new())?;
     let _ = HANDLER.set(handler);
 
     #[allow(unused)]
-    Builder::new("blec")
+    let plugin = Builder::new("blec")
         .invoke_handler(commands::commands())
         .setup(|app, api| {
             #[cfg(target_os = "android")]
@@ -40,7 +37,15 @@ pub fn init() -> TauriPlugin<Wry> {
             async_runtime::spawn(handle_events());
             Ok(())
         })
-        .build()
+        .build();
+    Ok(plugin)
+}
+
+/// Initializes the plugin.
+/// # Panics
+/// Panics if the handler cannot be initialized.
+pub fn init() -> TauriPlugin<Wry> {
+    try_init().expect("failed to initialize plugin")
 }
 
 /// Returns the BLE handler to use blec from rust.
