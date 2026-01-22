@@ -73,14 +73,14 @@ async fn get_central() -> Result<Adapter, Error> {
 pub enum OnDisconnectHandler {
     None,
     Sync(Box<dyn FnOnce() + Send>),
-    Async(futures::future::BoxFuture<'static, ()>),
+    Async(Box<dyn FnOnce() -> Box<dyn Future<Output = ()> + Send + Unpin> + Send>),
 }
 impl OnDisconnectHandler {
     async fn run(self) {
         match self {
             OnDisconnectHandler::None => {}
             OnDisconnectHandler::Sync(f) => f(),
-            OnDisconnectHandler::Async(f) => f.await,
+            OnDisconnectHandler::Async(f) => f().await,
         }
     }
 
@@ -88,17 +88,17 @@ impl OnDisconnectHandler {
     pub fn take(&mut self) -> Self {
         std::mem::replace(self, OnDisconnectHandler::None)
     }
-}
 
-impl<F: FnOnce() + Send + 'static> From<F> for OnDisconnectHandler {
-    fn from(func: F) -> Self {
-        OnDisconnectHandler::Sync(Box::new(func))
+    pub fn from_async<F, FUTURE>(func: F) -> Self
+    where
+        F: FnOnce() -> FUTURE + Send + 'static,
+        FUTURE: Future<Output = ()> + Send + 'static,
+    {
+        OnDisconnectHandler::Async(Box::new(move || Box::new(Box::pin(func()))))
     }
-}
 
-impl From<futures::future::BoxFuture<'static, ()>> for OnDisconnectHandler {
-    fn from(future: futures::future::BoxFuture<'static, ()>) -> Self {
-        OnDisconnectHandler::Async(future)
+    pub fn from_sync<F: FnOnce() + Send + 'static>(func: F) -> Self {
+        OnDisconnectHandler::Sync(Box::new(func))
     }
 }
 
@@ -604,7 +604,10 @@ impl Handler {
         // Acquire locks and clone before awaiting
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
-            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+            dev_guard
+                .as_ref()
+                .cloned()
+                .ok_or(Error::NoDeviceConnected)?
         };
         let charac = {
             let state = self.state.lock().await;
@@ -637,7 +640,10 @@ impl Handler {
     pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
-            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+            dev_guard
+                .as_ref()
+                .cloned()
+                .ok_or(Error::NoDeviceConnected)?
         };
         let charac = {
             let state = self.state.lock().await;
@@ -674,7 +680,10 @@ impl Handler {
     ) -> Result<(), Error> {
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
-            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+            dev_guard
+                .as_ref()
+                .cloned()
+                .ok_or(Error::NoDeviceConnected)?
         };
         let charac = {
             let state = self.state.lock().await;
@@ -703,7 +712,10 @@ impl Handler {
     pub async fn unsubscribe(&self, c: Uuid) -> Result<(), Error> {
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
-            dev_guard.as_ref().cloned().ok_or(Error::NoDeviceConnected)?
+            dev_guard
+                .as_ref()
+                .cloned()
+                .ok_or(Error::NoDeviceConnected)?
         };
         let charac = {
             let state = self.state.lock().await;

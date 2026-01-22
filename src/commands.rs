@@ -5,8 +5,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::get_handler;
 use crate::models::{AdapterState, BleDevice, ScanFilter, Service, WriteType};
+use crate::{get_handler, OnDisconnectHandler};
 
 #[command]
 pub(crate) async fn scan<R: Runtime>(
@@ -55,7 +55,11 @@ pub(crate) async fn connect<R: Runtime>(
         }
     };
     handler
-        .connect(&address, disconnct_handler.into(), allow_ibeacons)
+        .connect(
+            &address,
+            OnDisconnectHandler::from_sync(disconnct_handler),
+            allow_ibeacons,
+        )
         .await?;
     Ok(())
 }
