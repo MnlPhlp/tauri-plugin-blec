@@ -216,9 +216,10 @@ impl Handler {
     /// # Example
     /// ```no_run
     /// use tauri::async_runtime;
+    /// use tauri_plugin_blec::OnDisconnectHandler;
     /// async_runtime::block_on(async {
     ///    let handler = tauri_plugin_blec::get_handler().unwrap();
-    ///    handler.connect("00:00:00:00:00:00", (|| println!("disconnected")).into(), false).await.unwrap();
+    ///    handler.connect("00:00:00:00:00:00", OnDisconnectHandler::from_sync(|| println!("disconnected")), false).await.unwrap();
     /// });
     /// ```
     pub async fn connect(
