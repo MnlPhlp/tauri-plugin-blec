@@ -94,8 +94,31 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             }
         }
 
+        // Android 13 and upper
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            handleCharacteristicChanged(characteristic, value)
+        }
+
+        // Android 12 and below
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic
+        ) {
+            val value = characteristic.value
+            if (value != null) {
+                handleCharacteristicChanged(characteristic, value)
+            } else {
+                Log.e("Peripheral", "Value received onCharacteristicChanged is null")
+            }
+        }
+
+        // Extract the common logic into a helper function
+        private fun handleCharacteristicChanged(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {

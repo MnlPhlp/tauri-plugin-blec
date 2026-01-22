@@ -6,31 +6,41 @@ The main difference to using btleplug directly is that this uses the tauri plugi
 All other platforms use the btleplug implementation.
 
 ## Docs
+
 - [Rust docs](https://docs.rs/crate/tauri-plugin-blec/latest)
 - [JavaScript docs](https://mnlphlp.github.io/tauri-plugin-blec/)
 
 ## Installation
-### Install the rust part of the plugin:
-```
+
+### Install the rust part of the plugin
+
+```bash
 cargo add tauri-plugin-blec
 ```
+
 Or manually add it to the `src-tauri/Cargo.toml`
+
 ```toml
 [dependencies]
 tauri-plugin-blec = "0.4"
 ```
 
 ### Install the js bindings
+
 use your preferred JavaScript package manager to add `@mnlphlp/plugin-blec`:
-```
+
+```bash
 yarn add @mnlphlp/plugin-blec
 ```
-```
+
+```bash
 npm add @mnlphlp/plugin-blec
 ```
 
 ### Register the plugin in Tauri
+
 `src-tauri/src/lib.rs`
+
 ```rs
 tauri::Builder::default()
     .plugin(tauri_plugin_blec::init())
@@ -38,29 +48,47 @@ tauri::Builder::default()
     .expect("error while running tauri application");
 ```
 
+```rs
+let mut app = tauri::Builder::default();
+app = match tauri_plugin_blec::try_init() {
+    Ok(plugin) => app.plugin(plugin),
+    Err(e) => {
+        eprintln!("Failed to initialize blec plugin: {:?}", e);
+        app
+    }
+};
+app.run(tauri::generate_context!())
+    .expect("error while running tauri application");
+```
+
 ### Allow calls from Frontend
+
 Add `blec:default` to the permissions in your capabilities file.
 
 [Explanation about capabilities](https://v2.tauri.app/security/capabilities/)
 
 ### IOS Setup
+
 Add an entry to the info.plist of your app:
+
 ```xml
 <key>NSBluetoothAlwaysUsageDescription</key>
 <string>The App uses Bluetooth to communicate with BLE devices</string>
 ```
 
 Add the CoreBluetooth Framework in your xcode procjet:
+
 - open with `tauri ios dev --open`
 - click on your project to open settings
 - Add Framework under General -> Frameworks,Libraries and Embedded Content
 
-
 ## Usage in Frontend
+
 See [examples/plugin-blec-example](examples/plugin-blec-example) for a full working example that scans for devices, connects and sends/receives data.
 In order to use it run [examples/test-server](examples/test-server) on another device and connect to that server.
 
 Short example:
+
 ```ts
 import { connect, sendString } from '@mnlphlp/plugin-blec'
 // get address by scanning for devices and selecting the desired one
@@ -73,6 +101,7 @@ await sendString(CHARACTERISTIC_UUID, 'Test', 'withResponse')
 ```
 
 ## Usage in Backend
+
 The plugin can also be used from the rust backend.
 
 The handler returned by `get_handler()` is the same that is used by the frontend commands.

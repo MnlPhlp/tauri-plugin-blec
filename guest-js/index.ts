@@ -9,6 +9,7 @@ export type BleDevice = {
   services: string[];
   manufacturerData: Record<number, number[]>;
   serviceData: Record<string, number[]>;
+  txPowerLevel?: number;
 };
 
 export type BleCharacteristic = {

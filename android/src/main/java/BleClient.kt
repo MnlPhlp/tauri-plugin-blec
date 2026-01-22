@@ -13,6 +13,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanFilter.Builder
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanResult.TX_POWER_NOT_PRESENT
 import android.bluetooth.le.ScanSettings
 import android.content.Context.MODE_PRIVATE
 import android.content.Intent
@@ -42,7 +43,8 @@ class BleDevice(
     private val bonded: Boolean,
     private val manufacturerData: SparseArray<ByteArray>?,
     private val serviceData: Map<ParcelUuid, ByteArray>?,
-    private val services: List<ParcelUuid>?
+    private val services: List<ParcelUuid>?,
+    private val txPowerLevel: Int?
 ){
     private val base64Encoder: Base64.Encoder = Base64.getEncoder()
 
@@ -54,6 +56,7 @@ class BleDevice(
         obj.put("connected",connected)
         obj.put("bonded",bonded)
         obj.put("rssi",rssi)
+        obj.put("txPowerLevel",txPowerLevel)
         // create Json Array from services
         val services = if (services != null) {
             val arr = JSArray()
@@ -216,6 +219,11 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                 }
                 val connected = this@BleClient.manager!!.getConnectionState(result.device,BluetoothProfile.GATT_SERVER) == BluetoothProfile.STATE_CONNECTED
                 val bonded = result.device.getBondState() == BluetoothDevice.BOND_BONDED
+                val txPower = if (result.txPower == TX_POWER_NOT_PRESENT) {
+                    null
+                } else {
+                    result.txPower
+                }
                 val device = BleDevice(
                     result.device.address,
                     name,
@@ -224,7 +232,8 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                     bonded,
                     result.scanRecord?.manufacturerSpecificData,
                     result.scanRecord?.serviceData,
-                    result.scanRecord?.serviceUuids
+                    result.scanRecord?.serviceUuids,
+                    txPower
                 )
                 this@BleClient.plugin.devices[device.address] = Peripheral(this@BleClient.activity, result.device, this@BleClient.plugin)
                 val res = JSObject()
