@@ -29,7 +29,7 @@ struct Listener {
 
 struct HandlerState {
     characs: Vec<Characteristic>,
-    listen_handle: Option<async_runtime::JoinHandle<()>>,
+    listen_handle: Option<tokio::task::JoinHandle<()>>,
     on_disconnect: OnDisconnectHandler,
     connection_update_channel: Vec<mpsc::Sender<bool>>,
     scan_update_channel: Vec<mpsc::Sender<bool>>,
@@ -102,35 +102,32 @@ impl OnDisconnectHandler {
     }
 }
 
-#[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub enum SubscriptionHandler {
-    Sync(Arc<dyn Fn(Vec<u8>) + Send + Sync + 'static>),
-    ASync(
-        Arc<dyn (Fn(Vec<u8>) -> futures::future::BoxFuture<'static, ()>) + Send + Sync + 'static>,
-    ),
+    Sync(Box<dyn Fn(Vec<u8>) + Send + Sync>),
+    Async(Box<dyn Fn(Vec<u8>) -> Box<dyn Future<Output = ()> + Send + Unpin> + Send + Sync>),
 }
 
 impl SubscriptionHandler {
-    pub fn from_async(
-        func: impl (Fn(Vec<u8>) -> futures::future::BoxFuture<'static, ()>) + Send + Sync + 'static,
-    ) -> Self {
-        SubscriptionHandler::ASync(Arc::new(func))
+    pub fn from_async<F, FUTURE>(func: F) -> Self
+    where
+        F: Fn(Vec<u8>) -> FUTURE + Send + Sync + 'static,
+        FUTURE: Future<Output = ()> + Send + 'static,
+    {
+        SubscriptionHandler::Async(Box::new(move |data| Box::new(Box::pin(func(data)))))
     }
 
-    async fn run(self, data: Vec<u8>) {
+    async fn run(&self, data: Vec<u8>) {
         match self {
-            SubscriptionHandler::Sync(f) => tokio::task::spawn_blocking(move || f(data))
-                .await
-                .expect("failed to run sync callback"),
-            SubscriptionHandler::ASync(f) => f(data).await,
+            SubscriptionHandler::Sync(f) => f(data),
+            SubscriptionHandler::Async(f) => f(data).await,
         }
     }
 }
 
 impl<F: Fn(Vec<u8>) + Send + Sync + 'static> From<F> for SubscriptionHandler {
     fn from(func: F) -> Self {
-        SubscriptionHandler::Sync(Arc::new(func))
+        SubscriptionHandler::Sync(Box::new(func))
     }
 }
 
@@ -266,7 +263,7 @@ impl Handler {
             self.connect_services(&mut state).await?;
             debug!("Starting notification task");
             // start background task for notifications
-            state.listen_handle = Some(async_runtime::spawn(listen_notify(
+            state.listen_handle = Some(tokio::task::spawn(listen_notify(
                 self.connected_dev.lock().await.clone(),
                 self.notify_listeners.clone(),
             )));
@@ -899,21 +896,19 @@ async fn listen_notify(dev: Option<Peripheral>, listeners: Arc<Mutex<Vec<Listene
         .notifications()
         .await
         .expect("failed to get notifications stream");
-    let mut handles: HashMap<Uuid, tokio::task::JoinHandle<()>> = HashMap::new();
     while let Some(data) = stream.next().await {
-        info!("notification received: {data:?}");
+        debug!(
+            "notification received, listeners: {}",
+            listeners.lock().await.len()
+        );
         for l in listeners.lock().await.iter() {
             if l.uuid == data.uuid && l.service == data.service_uuid {
-                let cb = l.callback.clone();
-                // wait for running callback first
-                if let Some(handle) = handles.remove(&l.uuid) {
-                    let _ = handle.await;
-                    trace!("previous callback for {:?} finished", l.uuid);
-                }
-                // insert new callback
-                trace!("starting new callback for {:?}", l.uuid);
-                handles.insert(l.uuid, tokio::task::spawn(cb.run(data.value.clone())));
+                // run callback
+                trace!("starting callback for {:?}", l.uuid);
+                l.callback.run(data.value.clone()).await;
+                trace!("callback for {:?} finished", l.uuid);
             }
         }
     }
+    info!("Notification stream ended");
 }
