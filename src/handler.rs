@@ -10,7 +10,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::async_runtime;
 use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::sleep;
 use tracing::{debug, error, info, trace, warn};
@@ -331,7 +330,7 @@ impl Handler {
     /// # Panics
     /// panics if there is an error with handling the internal disconnect event
     pub async fn disconnect(&self) -> Result<(), Error> {
-        debug!("disconnect triggered by user");
+        info!("disconnect triggered by user");
         let mut connected_rx = self.connected_rx.clone();
         {
             // Scope is important to not lock device while waiting for disconnect event
@@ -352,7 +351,6 @@ impl Handler {
                 return Err(Error::NoDeviceConnected);
             }
         }
-        debug!("waiting for disconnect event");
         // the change will be triggered by handle_event -> handle_disconnect which runs in another
         // task
         connected_rx
@@ -368,6 +366,7 @@ impl Handler {
 
     /// Clears internal state, updates connected flag and calls disconnect callback
     async fn handle_disconnect(&self, peripheral_id: PeripheralId) -> Result<(), Error> {
+        info!("Handling disconnect for {peripheral_id}");
         let connected = self
             .connected_dev
             .lock()

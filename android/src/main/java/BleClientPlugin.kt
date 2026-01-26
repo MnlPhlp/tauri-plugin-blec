@@ -56,7 +56,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     @Command
     fun disconnect(invoke: Invoke){
         val args = invoke.parseArgs(ConnectParams::class.java)
-        val device = this.devices[args.address]
+        val device = this.connected_devices[args.address]
         if (device == null){
             invoke.reject("Device not found")
             return
