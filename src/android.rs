@@ -104,7 +104,7 @@ impl btleplug::api::Central for Adapter {
             Ok(())
         });
         get_handle()
-            .run_mobile_plugin("events", channel)
+            .run_mobile_plugin::<()>("events", channel)
             .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
         Ok(Box::pin(stream))
     }
@@ -120,7 +120,7 @@ impl btleplug::api::Central for Adapter {
         DEVICES.write().await.clear();
         let on_device = Channel::new(on_device_callback);
         get_handle()
-            .run_mobile_plugin(
+            .run_mobile_plugin::<()>(
                 "start_scan",
                 ScanParams {
                     services: filter.services,
@@ -134,7 +134,7 @@ impl btleplug::api::Central for Adapter {
 
     async fn stop_scan(&self) -> Result<()> {
         get_handle()
-            .run_mobile_plugin("stop_scan", serde_json::Value::Null)
+            .run_mobile_plugin::<()>("stop_scan", serde_json::Value::Null)
             .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
         Ok(())
     }
@@ -385,7 +385,7 @@ impl btleplug::api::Peripheral for Peripheral {
     }
 
     async fn connect(&self) -> Result<()> {
-        call_plugin_with_timeout(
+        call_plugin_with_timeout::<_, ()>(
             "connect",
             ConnectParams {
                 address: self.address,
@@ -407,7 +407,7 @@ impl btleplug::api::Peripheral for Peripheral {
     }
 
     async fn disconnect(&self) -> Result<()> {
-        call_plugin_with_timeout(
+        call_plugin_with_timeout::<_, ()>(
             "disconnect",
             ConnectParams {
                 address: self.address,
@@ -418,7 +418,7 @@ impl btleplug::api::Peripheral for Peripheral {
     }
 
     async fn discover_services(&self) -> Result<()> {
-        call_plugin_with_timeout(
+        call_plugin_with_timeout::<_, ()>(
             "discover_services",
             ConnectParams {
                 address: self.address,
@@ -436,7 +436,7 @@ impl btleplug::api::Peripheral for Peripheral {
         write_type: WriteType,
     ) -> Result<()> {
         get_handle()
-            .run_mobile_plugin(
+            .run_mobile_plugin::<()>(
                 "write",
                 serde_json::json!({
                     "address": self.address,
@@ -472,7 +472,7 @@ impl btleplug::api::Peripheral for Peripheral {
 
     async fn subscribe(&self, characteristic: &Characteristic) -> Result<()> {
         get_handle()
-            .run_mobile_plugin(
+            .run_mobile_plugin::<()>(
                 "subscribe",
                 ReadParams {
                     address: self.address,
@@ -486,7 +486,7 @@ impl btleplug::api::Peripheral for Peripheral {
 
     async fn unsubscribe(&self, characteristic: &Characteristic) -> Result<()> {
         get_handle()
-            .run_mobile_plugin(
+            .run_mobile_plugin::<()>(
                 "unsubscribe",
                 ReadParams {
                     address: self.address,
@@ -532,7 +532,7 @@ impl btleplug::api::Peripheral for Peripheral {
             Ok(())
         });
         get_handle()
-            .run_mobile_plugin(
+            .run_mobile_plugin::<()>(
                 "notifications",
                 NotifyParams {
                     address: self.address,
