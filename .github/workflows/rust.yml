@@ -18,6 +18,8 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install tauri dependencies
       run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev
+    - name: install rust android target
+      run: rustup target add aarch64-linux-android
     - name: Build
       run: cargo build --verbose
     - name: Run tests
