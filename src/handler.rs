@@ -159,7 +159,29 @@ impl Handler {
 
         let central = get_central().await?;
         let arc_adapter = Arc::new(central);
+
+        if let Ok(handler_static) = crate::get_handler() {
+            let stream_res = handler_static
+                .get_event_stream_internal(arc_adapter.clone())
+                .await;
+            tauri::async_runtime::spawn(async move {
+                if let Ok(mut stream) = stream_res {
+                    while let Some(event) = stream.next().await {
+                        let _ = handler_static.handle_event(event).await;
+                    }
+                }
+            });
+        }
+
         Ok(arc_adapter)
+    }
+
+    async fn get_event_stream_internal(
+        &self,
+        adapter: Arc<Adapter>,
+    ) -> Result<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>, Error> {
+        let events = adapter.events().await?;
+        Ok(events)
     }
 
     /// Returns true if a device is connected
@@ -814,7 +836,14 @@ impl Handler {
     }
 
     pub async fn get_adapter_state(&self) -> AdapterState {
-        let adapter = self.get_or_init_adapter().await?;
+        let adapter = match self.get_or_init_adapter().await {
+            Ok(a) => a,
+            Err(e) => {
+                error!("Failed to init adapter for state check: {e}");
+                return AdapterState::Unknown;
+            }
+        };
+
         match adapter.adapter_state().await {
             Ok(state) => match state {
                 CentralState::Unknown => AdapterState::Unknown,
