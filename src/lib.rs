@@ -34,7 +34,6 @@ pub fn try_init() -> Result<TauriPlugin<Wry>, Error> {
         .setup(|app, api| {
             #[cfg(target_os = "android")]
             android::init(app, api)?;
-            async_runtime::spawn(handle_events());
             Ok(())
         })
         .build();
@@ -67,20 +66,4 @@ pub fn check_permissions(ask_if_denied: bool) -> Result<bool, Error> {
     return Ok(android::check_permissions(ask_if_denied)?);
     #[cfg(not(target_os = "android"))]
     return Ok(true);
-}
-
-async fn handle_events() {
-    let handler = get_handler().expect("failed to get handler");
-    let stream = handler
-        .get_event_stream()
-        .await
-        .expect("failed to get event stream");
-    stream
-        .for_each(|event| async {
-            handler
-                .handle_event(event)
-                .await
-                .expect("failed to handle event");
-        })
-        .await;
 }
