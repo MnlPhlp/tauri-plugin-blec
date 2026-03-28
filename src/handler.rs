@@ -173,6 +173,7 @@ impl Handler {
             });
         }
 
+        *adapter_guard = Some(arc_adapter.clone());
         Ok(arc_adapter)
     }
 
