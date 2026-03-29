@@ -579,13 +579,15 @@ impl Handler {
 
     /// Stops scanning for devices
     /// # Errors
-    /// Returns an error if stopping the scan fails
+    /// Stops an ongoing scan. The polling task is aborted first, then the
+    /// adapter scan is stopped (best-effort — it may have already been
+    /// stopped by the polling task finishing).
     pub async fn stop_scan(&self) -> Result<(), Error> {
-        let adapter = self.get_or_init_adapter().await?;
-        adapter.stop_scan().await?;
         if let Some(handle) = self.state.lock().await.scan_task.take() {
             handle.abort();
         }
+        let adapter = self.get_or_init_adapter().await?;
+        let _ = adapter.stop_scan().await;
         self.send_scan_update(false).await;
         Ok(())
     }
