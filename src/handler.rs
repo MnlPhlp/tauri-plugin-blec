@@ -473,10 +473,11 @@ impl Handler {
         let adapter = self.get_or_init_adapter().await?;
         {
             let mut state = self.state.lock().await;
-            // stop any ongoing scan
+            // stop any ongoing scan (best-effort — scan may have already
+            // been stopped by the polling task)
             if let Some(handle) = state.scan_task.take() {
                 handle.abort();
-                adapter.stop_scan().await?;
+                let _ = adapter.stop_scan().await;
             }
             // start a new scan
             *ALLOW_IBEACONS.lock().await = allow_ibeacons;
