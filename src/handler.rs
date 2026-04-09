@@ -173,6 +173,7 @@ impl Handler {
             });
         }
 
+        *adapter_guard = Some(arc_adapter.clone());
         Ok(arc_adapter)
     }
 
@@ -472,10 +473,11 @@ impl Handler {
         let adapter = self.get_or_init_adapter().await?;
         {
             let mut state = self.state.lock().await;
-            // stop any ongoing scan
+            // stop any ongoing scan (best-effort — scan may have already
+            // been stopped by the polling task)
             if let Some(handle) = state.scan_task.take() {
                 handle.abort();
-                adapter.stop_scan().await?;
+                let _ = adapter.stop_scan().await;
             }
             // start a new scan
             *ALLOW_IBEACONS.lock().await = allow_ibeacons;
@@ -577,13 +579,15 @@ impl Handler {
 
     /// Stops scanning for devices
     /// # Errors
-    /// Returns an error if stopping the scan fails
+    /// Stops an ongoing scan. The polling task is aborted first, then the
+    /// adapter scan is stopped (best-effort — it may have already been
+    /// stopped by the polling task finishing).
     pub async fn stop_scan(&self) -> Result<(), Error> {
-        let adapter = self.get_or_init_adapter().await?;
-        adapter.stop_scan().await?;
         if let Some(handle) = self.state.lock().await.scan_task.take() {
             handle.abort();
         }
+        let adapter = self.get_or_init_adapter().await?;
+        let _ = adapter.stop_scan().await;
         self.send_scan_update(false).await;
         Ok(())
     }
