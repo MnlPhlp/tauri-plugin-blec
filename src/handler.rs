@@ -54,7 +54,7 @@ impl HandlerState {
 
 pub struct Handler {
     devices: Arc<Mutex<HashMap<String, Peripheral>>>,
-    adapter: Arc<Adapter>,
+    adapter: Mutex<Option<Arc<Adapter>>>,
     notify_listeners: Arc<Mutex<Vec<Listener>>>,
     connected_rx: watch::Receiver<bool>,
     connected_tx: watch::Sender<bool>,
@@ -132,11 +132,10 @@ impl<F: Fn(Vec<u8>) + Send + Sync + 'static> From<F> for SubscriptionHandler {
 
 impl Handler {
     pub(crate) async fn new() -> Result<Self, Error> {
-        let central = get_central().await?;
         let (connected_tx, connected_rx) = watch::channel(false);
         Ok(Self {
             devices: Arc::new(Mutex::new(HashMap::new())),
-            adapter: Arc::new(central),
+            adapter: Mutex::new(None),
             notify_listeners: Arc::new(Mutex::new(vec![])),
             connected_rx,
             connected_tx,
@@ -150,6 +149,40 @@ impl Handler {
                 characs: vec![],
             }),
         })
+    }
+
+    async fn get_or_init_adapter(&self) -> Result<Arc<Adapter>, Error> {
+        let mut adapter_guard = self.adapter.lock().await;
+        if let Some(adapter) = &*adapter_guard {
+            return Ok(adapter.clone());
+        }
+
+        let central = get_central().await?;
+        let arc_adapter = Arc::new(central);
+
+        if let Ok(handler_static) = crate::get_handler() {
+            let stream_res = handler_static
+                .get_event_stream_internal(arc_adapter.clone())
+                .await;
+            tauri::async_runtime::spawn(async move {
+                if let Ok(mut stream) = stream_res {
+                    while let Some(event) = stream.next().await {
+                        let _ = handler_static.handle_event(event).await;
+                    }
+                }
+            });
+        }
+
+        *adapter_guard = Some(arc_adapter.clone());
+        Ok(arc_adapter)
+    }
+
+    async fn get_event_stream_internal(
+        &self,
+        adapter: Arc<Adapter>,
+    ) -> Result<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>, Error> {
+        let events = adapter.events().await?;
+        Ok(events)
     }
 
     /// Returns true if a device is connected
@@ -437,23 +470,25 @@ impl Handler {
                 return Err(Error::InvalidFilterMask);
             }
         }
+        let adapter = self.get_or_init_adapter().await?;
         {
             let mut state = self.state.lock().await;
-            // stop any ongoing scan
+            // stop any ongoing scan (best-effort — scan may have already
+            // been stopped by the polling task)
             if let Some(handle) = state.scan_task.take() {
                 handle.abort();
-                self.adapter.stop_scan().await?;
+                let _ = adapter.stop_scan().await;
             }
             // start a new scan
             *ALLOW_IBEACONS.lock().await = allow_ibeacons;
-            self.adapter
+            adapter
                 .start_scan(btleplug::api::ScanFilter::default())
                 .await?;
         }
         self.send_scan_update(true).await;
         let mut state = self.state.lock().await;
         let mut self_devices = self.devices.clone();
-        let adapter = self.adapter.clone();
+        let adapter = adapter.clone();
         state.scan_task = Some(tokio::task::spawn(async move {
             self_devices.lock().await.clear();
             let loops = timeout / 200;
@@ -544,12 +579,15 @@ impl Handler {
 
     /// Stops scanning for devices
     /// # Errors
-    /// Returns an error if stopping the scan fails
+    /// Stops an ongoing scan. The polling task is aborted first, then the
+    /// adapter scan is stopped (best-effort — it may have already been
+    /// stopped by the polling task finishing).
     pub async fn stop_scan(&self) -> Result<(), Error> {
-        self.adapter.stop_scan().await?;
         if let Some(handle) = self.state.lock().await.scan_task.take() {
             handle.abort();
         }
+        let adapter = self.get_or_init_adapter().await?;
+        let _ = adapter.stop_scan().await;
         self.send_scan_update(false).await;
         Ok(())
     }
@@ -727,7 +765,8 @@ impl Handler {
     pub(super) async fn get_event_stream(
         &self,
     ) -> Result<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>, Error> {
-        let events = self.adapter.events().await?;
+        let adapter = self.get_or_init_adapter().await?;
+        let events = adapter.events().await?;
         Ok(events)
     }
 
@@ -801,7 +840,15 @@ impl Handler {
     }
 
     pub async fn get_adapter_state(&self) -> AdapterState {
-        match self.adapter.adapter_state().await {
+        let adapter = match self.get_or_init_adapter().await {
+            Ok(a) => a,
+            Err(e) => {
+                error!("Failed to init adapter for state check: {e}");
+                return AdapterState::Unknown;
+            }
+        };
+
+        match adapter.adapter_state().await {
             Ok(state) => match state {
                 CentralState::Unknown => AdapterState::Unknown,
                 CentralState::PoweredOn => AdapterState::On,
