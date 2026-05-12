@@ -133,7 +133,7 @@ impl btleplug::api::Central for Adapter {
                 "start_scan",
                 ScanParams {
                     services: filter.services,
-                    allow_ibeacons: *ALLOW_IBEACONS.load(std::sync::atomic::Ordering::Relaxed),
+                    allow_ibeacons: ALLOW_IBEACONS.load(std::sync::atomic::Ordering::Relaxed),
                     on_device,
                 },
             )
