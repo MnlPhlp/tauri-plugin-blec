@@ -60,6 +60,8 @@ pub struct Handler {
     connected_tx: watch::Sender<bool>,
     state: Mutex<HandlerState>,
     connected_dev: Mutex<Option<Peripheral>>,
+    /// Lock to serialize BLE GATT operations (only one read/write can be in flight at a time)
+    gatt_op_lock: Mutex<()>,
 }
 
 async fn get_central() -> Result<Adapter, Error> {
@@ -140,6 +142,7 @@ impl Handler {
             connected_rx,
             connected_tx,
             connected_dev: Mutex::new(None),
+            gatt_op_lock: Mutex::new(()),
             state: Mutex::new(HandlerState {
                 on_disconnect: OnDisconnectHandler::None,
                 connection_update_channel: vec![],
@@ -559,6 +562,7 @@ impl Handler {
         };
         debug!("discovering services on {address}");
         if device.services().is_empty() {
+            let _gatt_guard = self.gatt_op_lock.lock().await;
             run_with_timeout(device.discover_services(), "discover services").await?;
         }
         let services = device.services().iter().map(Service::from).collect();
@@ -635,7 +639,7 @@ impl Handler {
         data: &[u8],
         write_type: models::WriteType,
     ) -> Result<(), Error> {
-        // Acquire locks and clone before awaiting
+        let _gatt_guard = self.gatt_op_lock.lock().await;
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
             dev_guard
@@ -652,7 +656,7 @@ impl Handler {
             }
         };
 
-        dev.write(&charac, data, write_type.into()).await?;
+        run_with_timeout(dev.write(&charac, data, write_type.into()), "write").await?;
         Ok(())
     }
 
@@ -672,6 +676,7 @@ impl Handler {
     /// });
     /// ```
     pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
+        let _gatt_guard = self.gatt_op_lock.lock().await;
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
             dev_guard
@@ -687,7 +692,7 @@ impl Handler {
                 state.get_charac(c)?.clone()
             }
         };
-        let data = dev.read(&charac).await?;
+        let data = run_with_timeout(dev.read(&charac), "read").await?;
         Ok(data)
     }
 
@@ -712,6 +717,7 @@ impl Handler {
         service: Option<Uuid>,
         callback: impl Into<SubscriptionHandler>,
     ) -> Result<(), Error> {
+        let _gatt_guard = self.gatt_op_lock.lock().await;
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
             dev_guard
@@ -728,7 +734,7 @@ impl Handler {
             }
         };
         info!("subscribing to characteristic {charac:?}");
-        dev.subscribe(&charac).await?;
+        run_with_timeout(dev.subscribe(&charac), "subscribe").await?;
         info!("subscribed successfully");
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,
@@ -744,6 +750,7 @@ impl Handler {
     /// Returns an error if no device is connected or the characteristic is not available
     /// or if the unsubscribe operation fails
     pub async fn unsubscribe(&self, c: Uuid) -> Result<(), Error> {
+        let _gatt_guard = self.gatt_op_lock.lock().await;
         let dev = {
             let dev_guard = self.connected_dev.lock().await;
             dev_guard
@@ -755,7 +762,7 @@ impl Handler {
             let state = self.state.lock().await;
             state.get_charac(c)?.clone()
         };
-        dev.unsubscribe(&charac).await?;
+        run_with_timeout(dev.unsubscribe(&charac), "unsubscribe").await?;
         let mut listeners = self.notify_listeners.lock().await;
         listeners.retain(|l| l.uuid != charac.uuid);
         Ok(())
