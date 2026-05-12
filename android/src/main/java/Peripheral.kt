@@ -351,13 +351,19 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             }
             this.onWriteInvoke[key] = invoke
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(charac,args.data!!,if (args.withResponse){BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT}else{BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE})
+        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(charac,args.data!!,if (args.withResponse){BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT}else{BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE}) == BluetoothGatt.GATT_SUCCESS
         } else {
             @Suppress("DEPRECATION")
             charac.value = args.data
             @Suppress("DEPRECATION")
             gatt.writeCharacteristic(charac)
+        }
+        if (!started) {
+            synchronized(this.onWriteInvoke) {
+                this.onWriteInvoke.remove(key)
+            }
+            invoke.reject("Failed to start write on characteristic ${args.characteristic}")
         }
     }
 
@@ -381,7 +387,12 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             }
             this.onReadInvoke[key] = invoke
         }
-        gatt.readCharacteristic(charac)
+        if (!gatt.readCharacteristic(charac)) {
+            synchronized(this.onReadInvoke) {
+                this.onReadInvoke.remove(key)
+            }
+            invoke.reject("Failed to start read on characteristic ${args.characteristic}")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -412,13 +423,17 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         }
         this.onDescriptorInvoke = invoke
         val data = if (enabled){BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE}else{BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE}
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(descriptor,data)
+        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(descriptor,data) == BluetoothGatt.GATT_SUCCESS
         } else {
             @Suppress("DEPRECATION")
             descriptor.value = data
             @Suppress("DEPRECATION")
             gatt.writeDescriptor(descriptor)
+        }
+        if (!started) {
+            this.onDescriptorInvoke = null
+            invoke.reject("Failed to start descriptor write for ${args.characteristic}")
         }
     }
 

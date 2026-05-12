@@ -52,7 +52,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ConnectParams::class.java)
         val device = this.devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("connect: device '${args.address}' not found in discovered devices (known: ${this.devices.keys})")
             return
         }
         this.connected_devices[args.address] = device;
@@ -64,7 +64,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ConnectParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("disconnect: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         this.connected_devices.remove(args.address)
@@ -102,7 +102,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ConnectParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("discover_services: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.discoverServices(invoke)
@@ -113,7 +113,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ConnectParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("services: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.services(invoke)
@@ -130,7 +130,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(NotifyParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("notifications: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.setNotifyChannel(args.channel!!)
@@ -150,7 +150,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(WriteParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("write: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.write(invoke)
@@ -167,7 +167,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ReadParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("read: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.read(invoke)
@@ -178,7 +178,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ReadParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("subscribe: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.subscribe(invoke,true)
@@ -189,7 +189,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(ReadParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("unsubscribe: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.subscribe(invoke,false)
@@ -219,7 +219,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(MtuParams::class.java)
         val device = this.connected_devices[args.address]
         if (device == null){
-            invoke.reject("Device not found")
+            invoke.reject("request_mtu: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
         device.requestMtu(invoke, args.mtu)
