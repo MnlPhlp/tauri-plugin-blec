@@ -312,7 +312,10 @@ impl Handler {
         let device = self.connected_dev.lock().await;
         let device = device.as_ref().ok_or(Error::NoDeviceConnected)?;
         debug!("starting service discovery");
-        device.discover_services().await?;
+        {
+            let _gatt_guard = self.gatt_op_lock.lock().await;
+            run_with_timeout(device.discover_services(), "discover services").await?;
+        }
         debug!("service discovery done");
         let services = device.services();
         for s in services {
@@ -341,7 +344,10 @@ impl Handler {
             }
         }
         debug!("Connecting to device");
-        run_with_timeout(device.connect(), "Connect").await?;
+        {
+            let _gatt_guard = self.gatt_op_lock.lock().await;
+            run_with_timeout(device.connect(), "Connect").await?;
+        }
         // wait for the actual connection to be established
         if !*connected_rx.borrow_and_update() {
             info!("waiting for connection event");
