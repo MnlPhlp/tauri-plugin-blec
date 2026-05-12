@@ -288,14 +288,15 @@ impl Handler {
             error!("Failed to connect device: {e}");
             return Err(e);
         }
+        debug!("connecting services");
+        // discover service/characteristics (no state lock held during GATT op)
+        let characs = self.connect_services().await?;
         {
             debug!("locking state");
             let mut state = self.state.lock().await;
             // set callback to run on disconnect
             state.on_disconnect = on_disconnect;
-            debug!("connecting services");
-            // discover service/characteristics
-            self.connect_services(&mut state).await?;
+            state.characs = characs;
             debug!("Starting notification task");
             // start background task for notifications
             state.listen_handle = Some(tokio::task::spawn(listen_notify(
@@ -308,22 +309,24 @@ impl Handler {
         Ok(())
     }
 
-    async fn connect_services(&self, state: &mut HandlerState) -> Result<(), Error> {
-        let device = self.connected_dev.lock().await;
-        let device = device.as_ref().ok_or(Error::NoDeviceConnected)?;
+    async fn connect_services(&self) -> Result<Vec<Characteristic>, Error> {
+        let device = {
+            let dev = self.connected_dev.lock().await;
+            dev.as_ref().ok_or(Error::NoDeviceConnected)?.clone()
+        };
         debug!("starting service discovery");
         {
             let _gatt_guard = self.gatt_op_lock.lock().await;
             run_with_timeout(device.discover_services(), "discover services").await?;
         }
         debug!("service discovery done");
-        let services = device.services();
-        for s in services {
+        let mut characs = vec![];
+        for s in device.services() {
             for c in &s.characteristics {
-                state.characs.push(c.clone());
+                characs.push(c.clone());
             }
         }
-        Ok(())
+        Ok(characs)
     }
 
     async fn connect_device(&self, address: &str) -> Result<(), Error> {

@@ -471,18 +471,17 @@ impl btleplug::api::Peripheral for Peripheral {
         data: &[u8],
         write_type: WriteType,
     ) -> Result<()> {
-        get_handle()
-            .run_mobile_plugin::<()>(
-                "write",
-                serde_json::json!({
-                    "address": self.address,
-                    "characteristic": characteristic.uuid,
-                    "service": characteristic.service_uuid,
-                    "data": data,
-                    "withResponse": matches!(write_type, WriteType::WithResponse),
-                }),
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        call_plugin_with_timeout::<_, ()>(
+            "write",
+            serde_json::json!({
+                "address": self.address,
+                "characteristic": characteristic.uuid,
+                "service": characteristic.service_uuid,
+                "data": data,
+                "withResponse": matches!(write_type, WriteType::WithResponse),
+            }),
+        )
+        .await?;
         Ok(())
     }
 
@@ -492,45 +491,42 @@ impl btleplug::api::Peripheral for Peripheral {
             #[serde(deserialize_with = "deserialize_base64")]
             value: Vec<u8>,
         }
-        let res: ReadResult = get_handle()
-            .run_mobile_plugin(
-                "read",
-                ReadParams {
-                    address: self.address,
-                    characteristic: characteristic.uuid,
-                    service: characteristic.service_uuid,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        let res: ReadResult = call_plugin_with_timeout(
+            "read",
+            ReadParams {
+                address: self.address,
+                characteristic: characteristic.uuid,
+                service: characteristic.service_uuid,
+            },
+        )
+        .await?;
         debug!("read: {:?}", res.value);
         Ok(res.value)
     }
 
     async fn subscribe(&self, characteristic: &Characteristic) -> Result<()> {
-        get_handle()
-            .run_mobile_plugin::<()>(
-                "subscribe",
-                ReadParams {
-                    address: self.address,
-                    characteristic: characteristic.uuid,
-                    service: characteristic.service_uuid,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        call_plugin_with_timeout::<_, ()>(
+            "subscribe",
+            ReadParams {
+                address: self.address,
+                characteristic: characteristic.uuid,
+                service: characteristic.service_uuid,
+            },
+        )
+        .await?;
         Ok(())
     }
 
     async fn unsubscribe(&self, characteristic: &Characteristic) -> Result<()> {
-        get_handle()
-            .run_mobile_plugin::<()>(
-                "unsubscribe",
-                ReadParams {
-                    address: self.address,
-                    characteristic: characteristic.uuid,
-                    service: characteristic.service_uuid,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        call_plugin_with_timeout::<_, ()>(
+            "unsubscribe",
+            ReadParams {
+                address: self.address,
+                characteristic: characteristic.uuid,
+                service: characteristic.service_uuid,
+            },
+        )
+        .await?;
         Ok(())
     }
 
