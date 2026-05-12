@@ -1,6 +1,5 @@
 use std::sync::LazyLock;
 
-use futures::StreamExt;
 use once_cell::sync::OnceCell;
 use tauri::{
     async_runtime,

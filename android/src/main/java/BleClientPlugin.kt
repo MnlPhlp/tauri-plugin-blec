@@ -24,6 +24,12 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     var connected_devices: MutableMap<String, Peripheral> = mutableMapOf();
     var eventChannel: Channel? = null;
     private val client = BleClient(activity,this)
+    
+    @Command
+    fun clear_devices(invoke: Invoke){
+        this.devices.clear()
+        invoke.resolve()
+    }
 
     @Command
     fun start_scan(invoke: Invoke) {

@@ -11,6 +11,7 @@ use btleplug::{
 use futures::Stream;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::Deserialize;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use std::{
     collections::{BTreeSet, HashMap},
@@ -90,6 +91,14 @@ pub fn check_permissions(
 #[async_trait]
 impl btleplug::api::Central for Adapter {
     type Peripheral = Peripheral;
+
+    async fn clear_peripherals(&self) -> Result<()> {
+        DEVICES.write().await.clear();
+        get_handle()
+            .run_mobile_plugin::<()>("clear_peripherals", serde_json::Value::Null)
+            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        Ok(())
+    }
 
     async fn events(&self) -> Result<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>> {
         let (tx, rx) = tokio::sync::mpsc::channel::<CentralEvent>(1);
@@ -224,13 +233,15 @@ where
     Ok(res)
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Peripheral {
     id: PeripheralId,
     address: BDAddr,
     name: String,
     rssi: i16,
+    #[serde(default = "default_mtu")]
+    mtu_val: AtomicU16,
     #[serde(default, deserialize_with = "deserialize_base64_map")]
     manufacturer_data: HashMap<u16, Vec<u8>>,
     #[serde(default, deserialize_with = "deserialize_base64_map")]
@@ -239,6 +250,25 @@ pub struct Peripheral {
     services: Vec<Uuid>,
     tx_power_level: Option<i16>,
 }
+fn default_mtu() -> AtomicU16 {
+    AtomicU16::new(23)
+}
+impl Clone for Peripheral {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            address: self.address,
+            name: self.name.clone(),
+            rssi: self.rssi,
+            mtu_val: AtomicU16::new(self.mtu_val.load(Ordering::Relaxed)),
+            manufacturer_data: self.manufacturer_data.clone(),
+            service_data: self.service_data.clone(),
+            services: self.services.clone(),
+            tx_power_level: self.tx_power_level,
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectParams {
@@ -300,10 +330,15 @@ impl btleplug::api::Peripheral for Peripheral {
         self.address
     }
 
+    fn mtu(&self) -> u16 {
+        self.mtu_val.load(Ordering::Relaxed)
+    }
+
     async fn properties(&self) -> Result<Option<PeripheralProperties>> {
         Ok(Some(PeripheralProperties {
             address: self.address,
             local_name: Some(self.name.clone()),
+            advertisement_name: Some(self.name.clone()),
             rssi: Some(self.rssi),
             manufacturer_data: self.manufacturer_data.clone(),
             service_data: self.service_data.clone(),
@@ -403,6 +438,7 @@ impl btleplug::api::Peripheral for Peripheral {
         )
         .await?;
         info!("mtu set to: {:?}", mtu.mtu);
+        self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
         Ok(())
     }
 
