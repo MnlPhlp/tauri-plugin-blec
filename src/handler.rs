@@ -412,14 +412,13 @@ impl Handler {
             return Ok(());
         }
         {
-            debug!("locking state for disconnect");
-            let mut state = self.state.lock().await;
             info!("disconnecting");
             *self.connected_dev.lock().await = None;
+            *self.notify_listeners.lock().await = vec![];
+            let mut state = self.state.lock().await;
             if let Some(handle) = state.listen_handle.take() {
                 handle.abort();
             }
-            *self.notify_listeners.lock().await = vec![];
             state.on_disconnect.take().run().await;
             state.characs.clear();
         }
@@ -480,7 +479,7 @@ impl Handler {
                 let _ = adapter.stop_scan().await;
             }
             // start a new scan
-            *ALLOW_IBEACONS.lock().await = allow_ibeacons;
+            ALLOW_IBEACONS.store(allow_ibeacons, std::sync::atomic::Ordering::Release);
             adapter
                 .start_scan(btleplug::api::ScanFilter::default())
                 .await?;

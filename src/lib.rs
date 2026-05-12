@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::sync::atomic::AtomicBool;
 
 use once_cell::sync::OnceCell;
 use tauri::{
@@ -17,9 +17,8 @@ pub mod models;
 pub use error::Error;
 pub use handler::Handler;
 pub use handler::{OnDisconnectHandler, SubscriptionHandler};
-use tokio::sync::Mutex;
 
-pub static ALLOW_IBEACONS: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+pub static ALLOW_IBEACONS: AtomicBool = AtomicBool::new(false);
 
 static HANDLER: OnceCell<Handler> = OnceCell::new();
 
