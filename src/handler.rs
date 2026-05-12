@@ -768,14 +768,6 @@ impl Handler {
         Ok(())
     }
 
-    pub(super) async fn get_event_stream(
-        &self,
-    ) -> Result<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>, Error> {
-        let adapter = self.get_or_init_adapter().await?;
-        let events = adapter.events().await?;
-        Ok(events)
-    }
-
     pub(crate) async fn handle_event(&self, event: CentralEvent) -> Result<(), Error> {
         debug!("handling event: {event:?}");
         match event {
