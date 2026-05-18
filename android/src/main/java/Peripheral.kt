@@ -57,19 +57,30 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothGatt.STATE_CONNECTED && gatt != null) {
-                // gatt.requestMtu(517)
                 this@Peripheral.connected = true
                 this@Peripheral.gatt = gatt
                 this@Peripheral.onConnectionStateChange?.invoke(true, "")
                 this@Peripheral.sendEvent(Event.DeviceConnected)
-
             } else {
+                // Either a connection failure (status != GATT_SUCCESS) or a
+                // disconnection. In both cases the BluetoothGatt instance must
+                // be closed to release the underlying client interface,
+                // otherwise repeated connect/disconnect cycles run into the
+                // 30 client limit and start failing with status 133.
                 this@Peripheral.connected = false
+                val existingGatt = this@Peripheral.gatt ?: gatt
                 this@Peripheral.gatt = null
-                this@Peripheral.onConnectionStateChange?.invoke(
-                    false,
-                    "Not connected. Status: $status, State: $newState"
-                )
+                try {
+                    existingGatt?.close()
+                } catch (e: Exception) {
+                    Log.w("Peripheral", "Failed to close gatt: ${e.message}")
+                }
+                val error = if (status != BluetoothGatt.GATT_SUCCESS) {
+                    "Connection failed. Status: $status, State: $newState"
+                } else {
+                    "Disconnected. State: $newState"
+                }
+                this@Peripheral.onConnectionStateChange?.invoke(false, error)
                 this@Peripheral.sendEvent(Event.DeviceDisconnected)
             }
         }
@@ -225,7 +236,10 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             }
             this@Peripheral.onConnectionStateChange = null
         }
-        this.device.connectGatt(activity, false, this.callback)
+        // Explicitly request the LE transport. Without this, dual-mode
+        // peripherals can be connected over BR/EDR which then fails the GATT
+        // operations (often surfacing as status 133).
+        this.device.connectGatt(activity, false, this.callback, BluetoothDevice.TRANSPORT_LE)
     }
 
     @SuppressLint("MissingPermission")
@@ -264,9 +278,21 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
 
     @SuppressLint("MissingPermission")
     fun disconnect(invoke: Invoke){
-        this.gatt?.disconnect()
-        this.connected = false
-        invoke.resolve()
+        val gatt = this.gatt
+        if (gatt == null) {
+            this.connected = false
+            invoke.resolve()
+            return
+        }
+        // Wait for the disconnect callback before resolving so the caller
+        // doesn't immediately try to reconnect while the stack is still
+        // cleaning up (which on Android often fails with status 133). The
+        // BluetoothGatt is closed inside onConnectionStateChange.
+        this.onConnectionStateChange = { _, _ ->
+            this@Peripheral.onConnectionStateChange = null
+            invoke.resolve()
+        }
+        gatt.disconnect()
     }
 
      class ResCharacteristic (
