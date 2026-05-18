@@ -50,8 +50,12 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     private var currentMtu = 517;
 
     private val retryHandler = Handler(Looper.getMainLooper())
-    private val maxAttempts = 3
-    private val retryDelayMs = 100L
+    private val maxAttempts = 10
+    private val retryDelayMs = 50L
+    // Timeout for write-without-response: if onCharacteristicWrite is not delivered
+    // within this window we resolve anyway so the caller is never blocked indefinitely.
+    private val writeNoResponseTimeoutMs = 300L
+    private val writeTimeouts: MutableMap<Pair<UUID, UUID>, Runnable> = mutableMapOf()
 
     private fun runOnMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
@@ -212,6 +216,12 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             val key = Pair(charac.uuid, charac.service.uuid)
             val op = synchronized(this@Peripheral.onWriteInvoke) {
                 this@Peripheral.onWriteInvoke.remove(key)
+            }
+            // Cancel the no-response timeout if it is still pending
+            synchronized(this@Peripheral.writeTimeouts) {
+                this@Peripheral.writeTimeouts.remove(key)?.let {
+                    this@Peripheral.retryHandler.removeCallbacks(it)
+                }
             }
             if (op == null) {
                 // Most likely a callback for a previously-completed
@@ -509,19 +519,14 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 op.invoke.reject("No gatt server connected")
                 return@runOnMain
             }
-            // For write-without-response, the onCharacteristicWrite callback is not
-            // reliably delivered by every Android Bluetooth stack/peripheral, which
-            // causes the Rust side to block until its timeout fires. Resolve as soon
-            // as the request was accepted by the stack instead of waiting on the
-            // callback.
-            val waitForCallback = op.withResponse
-            if (waitForCallback) {
-                synchronized(this.onWriteInvoke) {
-                    if (this.onWriteInvoke[key] != null) {
-                        this.onWriteInvoke[key]!!.invoke.reject("write was overwritten before finishing")
-                    }
-                    this.onWriteInvoke[key] = op
+            // Always register the op so onCharacteristicWrite can find it regardless
+            // of write type. For write-without-response we also arm a timeout below
+            // because some devices/stacks never deliver the callback.
+            synchronized(this.onWriteInvoke) {
+                if (this.onWriteInvoke[key] != null) {
+                    this.onWriteInvoke[key]!!.invoke.reject("write was overwritten before finishing")
                 }
+                this.onWriteInvoke[key] = op
             }
             val writeType = if (op.withResponse) {
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
@@ -543,10 +548,8 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 }
             }
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                if (waitForCallback) {
-                    synchronized(this.onWriteInvoke) {
-                        this.onWriteInvoke.remove(key)
-                    }
+                synchronized(this.onWriteInvoke) {
+                    this.onWriteInvoke.remove(key)
                 }
                 if (op.attempt < maxAttempts) {
                     val nextAttempt = op.attempt + 1
@@ -559,11 +562,33 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 }
                 return@runOnMain
             }
-            if (!waitForCallback) {
-                synchronized(this.expectedStaleWriteAcks) {
-                    this.expectedStaleWriteAcks[key] = (this.expectedStaleWriteAcks[key] ?: 0) + 1
+            if (!op.withResponse) {
+                // For write-without-response the GATT stack still requires us to wait
+                // for onCharacteristicWrite before issuing the next operation (otherwise
+                // a second write arrives while the stack is busy and returns status 201
+                // WRITE_REQUEST_BUSY).  We wait for the callback but fall back to a
+                // timeout so the caller is never blocked on devices that never fire it.
+                val timeoutRunnable = Runnable {
+                    val timedOutOp = synchronized(this@Peripheral.onWriteInvoke) {
+                        this@Peripheral.onWriteInvoke.remove(key)
+                    }
+                    synchronized(this@Peripheral.writeTimeouts) {
+                        this@Peripheral.writeTimeouts.remove(key)
+                    }
+                    if (timedOutOp != null) {
+                        Log.w("Peripheral", "onCharacteristicWrite not delivered for ${charac.uuid} within ${writeNoResponseTimeoutMs}ms, resolving")
+                        // Account for the late callback that might still arrive
+                        synchronized(this@Peripheral.expectedStaleWriteAcks) {
+                            this@Peripheral.expectedStaleWriteAcks[key] = (this@Peripheral.expectedStaleWriteAcks[key] ?: 0) + 1
+                        }
+                        timedOutOp.invoke.resolve()
+                    }
                 }
-                op.invoke.resolve()
+                synchronized(this.writeTimeouts) {
+                    this.writeTimeouts.remove(key)?.let { retryHandler.removeCallbacks(it) }
+                    this.writeTimeouts[key] = timeoutRunnable
+                }
+                retryHandler.postDelayed(timeoutRunnable, writeNoResponseTimeoutMs)
             }
         }
     }
