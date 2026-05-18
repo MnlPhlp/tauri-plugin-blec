@@ -33,6 +33,11 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     private var notifyChannel:Channel? = null
     private val onReadInvoke:MutableMap<Pair<UUID,UUID>,ReadOp> = mutableMapOf()
     private val onWriteInvoke:MutableMap<Pair<UUID,UUID>,WriteOp> = mutableMapOf()
+    // Counts onCharacteristicWrite callbacks we expect to receive but should
+    // ignore. Incremented every time a write-without-response is resolved
+    // synchronously, so the subsequent (otherwise unexpected) callback can be
+    // dropped without logging an error.
+    private val expectedStaleWriteAcks: MutableMap<Pair<UUID,UUID>,Int> = mutableMapOf()
     private var onDescriptorInvoke: DescriptorOp? = null
     private var onMtuInvoke: Invoke? = null
     private var currentMtu = 517;
@@ -185,7 +190,26 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 this@Peripheral.onWriteInvoke.remove(key)
             }
             if (op == null) {
-                Log.e("Peripheral", "Did not find tauri invoke obj for write on $key")
+                // Most likely a callback for a previously-completed
+                // write-without-response (we already resolved its invoke
+                // synchronously). Consume one of the expected stale acks for
+                // this key and drop the callback silently.
+                val consumed = synchronized(this@Peripheral.expectedStaleWriteAcks) {
+                    val remaining = this@Peripheral.expectedStaleWriteAcks[key] ?: 0
+                    if (remaining > 0) {
+                        if (remaining == 1) {
+                            this@Peripheral.expectedStaleWriteAcks.remove(key)
+                        } else {
+                            this@Peripheral.expectedStaleWriteAcks[key] = remaining - 1
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!consumed) {
+                    Log.e("Peripheral", "Did not find tauri invoke obj for write on $key")
+                }
                 return
             }
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -193,10 +217,10 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 return
             }
             if (op.attempt < this@Peripheral.maxAttempts) {
-                val nextAttempt = op.attempt + 1
+                op.attempt += 1
                 Log.w("Peripheral", "Write on ${charac.uuid} failed (status $status, attempt ${op.attempt}/${this@Peripheral.maxAttempts}), retrying")
                 this@Peripheral.retryHandler.postDelayed({
-                    this@Peripheral.startWrite(key, charac, op.copy(attempt = nextAttempt))
+                    this@Peripheral.startWrite(key, charac, op)
                 }, this@Peripheral.retryDelayMs)
             } else {
                 op.invoke.reject("Write to characteristic ${charac.uuid} failed after ${op.attempt} attempts with status $status (${statusCodeName(status)})")
@@ -485,6 +509,9 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 return@runOnMain
             }
             if (!waitForCallback) {
+                synchronized(this.expectedStaleWriteAcks) {
+                    this.expectedStaleWriteAcks[key] = (this.expectedStaleWriteAcks[key] ?: 0) + 1
+                }
                 op.invoke.resolve()
             }
         }
