@@ -330,6 +330,7 @@ impl Handler {
     }
 
     async fn connect_device(&self, address: &str) -> Result<(), Error> {
+        trace!("connect_device: initiating connection to {address}");
         debug!("connecting to {address}",);
         let mut connected_rx = self.connected_rx.clone();
         let devices = self.devices.lock().await;
@@ -364,6 +365,7 @@ impl Handler {
             warn!("Still not connected after connection event");
             return Err(Error::ConnectionFailed);
         }
+        trace!("connect_device: connection established to {address}");
         info!("device connected");
         Ok(())
     }
@@ -375,6 +377,7 @@ impl Handler {
     /// # Panics
     /// panics if there is an error with handling the internal disconnect event
     pub async fn disconnect(&self) -> Result<(), Error> {
+        trace!("disconnect: user-initiated disconnect");
         info!("disconnect triggered by user");
         let mut connected_rx = self.connected_rx.clone();
         {
@@ -411,6 +414,7 @@ impl Handler {
 
     /// Clears internal state, updates connected flag and calls disconnect callback
     async fn handle_disconnect(&self, peripheral_id: PeripheralId) -> Result<(), Error> {
+        trace!("handle_disconnect: DeviceDisconnected event for {peripheral_id}");
         info!("Handling disconnect for {peripheral_id}");
         let connected = self
             .connected_dev
@@ -665,6 +669,11 @@ impl Handler {
             }
         };
 
+        trace!(
+            "sending {} bytes to characteristic {c}: {:02x?}",
+            data.len(),
+            data
+        );
         run_with_timeout(dev.write(&charac, data, write_type.into()), "write").await?;
         Ok(())
     }
@@ -702,6 +711,11 @@ impl Handler {
             }
         };
         let data = run_with_timeout(dev.read(&charac), "read").await?;
+        trace!(
+            "received {} bytes from characteristic {c}: {:02x?}",
+            data.len(),
+            data
+        );
         Ok(data)
     }
 
@@ -807,6 +821,7 @@ impl Handler {
         let connected_device = self.connected_dev.lock().await.as_ref().map(|d| d.id());
         if let Some(connected_device) = connected_device {
             if connected_device == peripheral_id {
+                trace!("handle_connect: DeviceConnected event for {peripheral_id}");
                 debug!("connection to {peripheral_id} established");
                 self.connected_tx
                     .send(true)
@@ -956,6 +971,13 @@ async fn listen_notify(dev: Option<Peripheral>, listeners: Arc<Mutex<Vec<Listene
         );
         for l in listeners.lock().await.iter() {
             if l.uuid == data.uuid && l.service == data.service_uuid {
+                trace!(
+                    "notification from {}/{}: {} bytes: {:02x?}",
+                    data.service_uuid,
+                    data.uuid,
+                    data.value.len(),
+                    data.value
+                );
                 // run callback
                 trace!("starting callback for {:?}", l.uuid);
                 l.callback.run(data.value.clone()).await;
