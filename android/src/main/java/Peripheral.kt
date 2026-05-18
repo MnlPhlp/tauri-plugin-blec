@@ -51,7 +51,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
 
     private val retryHandler = Handler(Looper.getMainLooper())
     private val maxAttempts = 10
-    private val retryDelayMs = 50L
+    private val retryDelayMs = 100L
     // Timeout for write-without-response: if onCharacteristicWrite is not delivered
     // within this window we resolve anyway so the caller is never blocked indefinitely.
     private val writeNoResponseTimeoutMs = 300L
@@ -553,10 +553,16 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 }
                 if (op.attempt < maxAttempts) {
                     val nextAttempt = op.attempt + 1
-                    Log.w("Peripheral", "Failed to start write on ${charac.uuid} (status $status, attempt ${op.attempt}/$maxAttempts), retrying")
+                    // Status 201 = WRITE_REQUEST_BUSY: the GATT stack has a write in
+                    // flight that has not yet been acknowledged. Retrying at 100 ms
+                    // intervals just burns through attempts without giving the stack
+                    // time to drain. Use a longer delay so the in-flight operation can
+                    // complete before we try again.
+                    val delay = if (status == 201) 500L else retryDelayMs
+                    Log.w("Peripheral", "Failed to start write on ${charac.uuid} (status $status, attempt ${op.attempt}/$maxAttempts), retrying in ${delay}ms")
                     retryHandler.postDelayed({
                         startWrite(key, charac, op.copy(attempt = nextAttempt))
-                    }, retryDelayMs)
+                    }, delay)
                 } else {
                     op.invoke.reject("Failed to start write on characteristic ${charac.uuid} after ${op.attempt} attempts: status $status (${statusCodeName(status)})")
                 }
