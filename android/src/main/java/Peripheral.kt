@@ -345,25 +345,50 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             invoke.reject("Characterisitc ${args.characteristic} not found")
             return
         }
-        synchronized(this.onWriteInvoke) {
-            if (this.onWriteInvoke[key] != null) {
-                this.onWriteInvoke[key]!!.reject("write was overwritten before finishing")
+        // For write-without-response, the onCharacteristicWrite callback is not
+        // reliably delivered by every Android Bluetooth stack/peripheral, which
+        // causes the Rust side to block until its timeout fires. Resolve as soon
+        // as the request was accepted by the stack instead of waiting on the
+        // callback.
+        val waitForCallback = args.withResponse
+        if (waitForCallback) {
+            synchronized(this.onWriteInvoke) {
+                if (this.onWriteInvoke[key] != null) {
+                    this.onWriteInvoke[key]!!.reject("write was overwritten before finishing")
+                }
+                this.onWriteInvoke[key] = invoke
             }
-            this.onWriteInvoke[key] = invoke
         }
-        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(charac,args.data!!,if (args.withResponse){BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT}else{BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE}) == BluetoothGatt.GATT_SUCCESS
+        val writeType = if (args.withResponse) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+        val status: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(charac, args.data!!, writeType)
+        } else {
+            @Suppress("DEPRECATION")
+            charac.writeType = writeType
             @Suppress("DEPRECATION")
             charac.value = args.data
             @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(charac)
-        }
-        if (!started) {
-            synchronized(this.onWriteInvoke) {
-                this.onWriteInvoke.remove(key)
+            if (gatt.writeCharacteristic(charac)) {
+                BluetoothGatt.GATT_SUCCESS
+            } else {
+                BluetoothGatt.GATT_FAILURE
             }
-            invoke.reject("Failed to start write on characteristic ${args.characteristic}")
+        }
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            if (waitForCallback) {
+                synchronized(this.onWriteInvoke) {
+                    this.onWriteInvoke.remove(key)
+                }
+            }
+            invoke.reject("Failed to start write on characteristic ${args.characteristic}: status $status (${statusCodeName(status)})")
+            return
+        }
+        if (!waitForCallback) {
+            invoke.resolve()
         }
     }
 
@@ -423,17 +448,21 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         }
         this.onDescriptorInvoke = invoke
         val data = if (enabled){BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE}else{BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE}
-        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(descriptor,data) == BluetoothGatt.GATT_SUCCESS
+        val status: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(descriptor, data)
         } else {
             @Suppress("DEPRECATION")
             descriptor.value = data
             @Suppress("DEPRECATION")
-            gatt.writeDescriptor(descriptor)
+            if (gatt.writeDescriptor(descriptor)) {
+                BluetoothGatt.GATT_SUCCESS
+            } else {
+                BluetoothGatt.GATT_FAILURE
+            }
         }
-        if (!started) {
+        if (status != BluetoothGatt.GATT_SUCCESS) {
             this.onDescriptorInvoke = null
-            invoke.reject("Failed to start descriptor write for ${args.characteristic}")
+            invoke.reject("Failed to start descriptor write for ${args.characteristic}: status $status (${statusCodeName(status)})")
         }
     }
 
@@ -454,5 +483,17 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                 invoke.reject("Failed to request mtu")
             }
         })
+    }
+
+    private fun statusCodeName(status: Int): String {
+        // Translate the BluetoothStatusCodes / BluetoothGatt error code into a
+        // human readable name. Only the GATT-relevant codes are mapped here.
+        return when (status) {
+            0 -> "SUCCESS"
+            200 -> "ERROR_GATT_WRITE_NOT_ALLOWED"
+            201 -> "ERROR_GATT_WRITE_REQUEST_BUSY"
+            257 -> "GATT_FAILURE"
+            else -> "UNKNOWN"
+        }
     }
 }
