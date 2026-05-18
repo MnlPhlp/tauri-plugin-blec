@@ -20,6 +20,13 @@ import java.util.UUID
 
 
 class Peripheral(private val activity: Activity, private val device: BluetoothDevice, private val plugin: BleClientPlugin) {
+    // Retry state for connect/discover
+    private var connectAttempts = 0
+    private val maxConnectAttempts = 4
+    private val connectRetryDelayMs = 350L
+    private var discoverAttempts = 0
+    private val maxDiscoverAttempts = 3
+    private val discoverRetryDelayMs = 200L
     private val CLIENT_CHARACTERISTIC_CONFIGURATION_DESCRIPTOR: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     private val base64Encoder: Base64.Encoder = Base64.getEncoder()
 
@@ -111,7 +118,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
                     Log.w("Peripheral", "Failed to close gatt: ${e.message}")
                 }
                 val error = if (status != BluetoothGatt.GATT_SUCCESS) {
-                    "Connection failed. Status: $status, State: $newState"
+                    "Connection failed. Status: $status (${statusCodeName(status)}), State: $newState"
                 } else {
                     "Disconnected. State: $newState"
                 }
@@ -121,15 +128,32 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            println("onServicesDiscovered status $status, services ${gatt.services}")
-
+            Log.i("Peripheral", "onServicesDiscovered status $status, services ${gatt.services}")
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                // Android BLE edge-case handling: status 133, 62, 129 are
+                // commonly transient and can succeed on a second attempt.
+                val isEdgeCase = (status == 133 || status == 62 || status == 129)
+                if (isEdgeCase && discoverAttempts < maxDiscoverAttempts) {
+                    discoverAttempts += 1
+                    Log.w("Peripheral", "Service discovery failed (status $status ${statusCodeName(status)}), retrying attempt $discoverAttempts/$maxDiscoverAttempts")
+                    retryHandler.postDelayed({
+                        if (this@Peripheral.connected) {
+                            gatt.discoverServices()
+                        } else {
+                            this@Peripheral.onServicesDiscovered?.invoke(false, "Service discovery aborted: disconnected during retry")
+                            discoverAttempts = 0
+                        }
+                    }, discoverRetryDelayMs)
+                    return
+                }
+                discoverAttempts = 0
                 this@Peripheral.services = listOf()
                 this@Peripheral.onServicesDiscovered?.invoke(
                     false,
-                    "No services discovered. Status $status"
+                    "No services discovered. Status $status (${statusCodeName(status)}) after ${discoverAttempts + 1} attempt(s)"
                 )
             } else {
+                discoverAttempts = 0
                 this@Peripheral.services = gatt.services
                 for (s in gatt.services) {
                     for (c in s.characteristics) {
@@ -307,19 +331,45 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
     @SuppressLint("MissingPermission")
     fun connect(invoke:Invoke) {
         println("connect android implementation called")
+        connectAttempts = 0
+        connectInternal(invoke)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectInternal(invoke: Invoke) {
         this.onConnectionStateChange = { success, error ->
-            if(success){
+            if (success) {
+                this@Peripheral.onConnectionStateChange = null
                 invoke.resolve()
             } else {
-                invoke.reject(error)
+                // Android BLE edge-case handling: status 133/62/129 are
+                // commonly transient. Retry a few times before giving up.
+                val isEdgeCase = error.contains("Status: 133") ||
+                    error.contains("Status: 62") ||
+                    error.contains("Status: 129")
+                if (isEdgeCase && connectAttempts < maxConnectAttempts) {
+                    connectAttempts += 1
+                    Log.w("Peripheral", "Connect failed ($error), retrying attempt $connectAttempts/$maxConnectAttempts")
+                    retryHandler.postDelayed({
+                        connectInternal(invoke)
+                    }, connectRetryDelayMs)
+                } else {
+                    this@Peripheral.onConnectionStateChange = null
+                    invoke.reject(error)
+                }
             }
-            this@Peripheral.onConnectionStateChange = null
         }
         // Explicitly request the LE transport. Without this, dual-mode
         // peripherals can be connected over BR/EDR which then fails the GATT
         // operations (often surfacing as status 133).
         runOnMain {
-            this.device.connectGatt(activity, false, this.callback, BluetoothDevice.TRANSPORT_LE)
+            try {
+                this.device.connectGatt(activity, false, this.callback, BluetoothDevice.TRANSPORT_LE)
+            } catch (e: Exception) {
+                Log.e("Peripheral", "Exception during connectGatt: ${e.message}")
+                this@Peripheral.onConnectionStateChange = null
+                invoke.reject("Exception during connectGatt: ${e.message}")
+            }
         }
     }
 
@@ -330,6 +380,7 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
             invoke.reject("No gatt server connected")
             return
         }
+        discoverAttempts = 0
         this.onServicesDiscovered={ success, error ->
             if (success) {
                 invoke.resolve()
@@ -652,10 +703,26 @@ class Peripheral(private val activity: Activity, private val device: BluetoothDe
         // human readable name. Only the GATT-relevant codes are mapped here.
         return when (status) {
             0 -> "SUCCESS"
+            1 -> "GATT_INVALID_HANDLE"
+            2 -> "GATT_READ_NOT_PERMITTED"
+            3 -> "GATT_WRITE_NOT_PERMITTED"
+            4 -> "GATT_INVALID_PDU"
+            5 -> "GATT_INSUFFICIENT_AUTHENTICATION"
+            6 -> "GATT_REQUEST_NOT_SUPPORTED"
+            7 -> "GATT_INVALID_OFFSET"
+            8 -> "GATT_ERROR"
+            13 -> "GATT_CONN_TIMEOUT"
+            15 -> "GATT_CONN_TERMINATE_PEER_USER"
+            16 -> "GATT_CONN_TERMINATE_LOCAL_HOST"
+            19 -> "GATT_CONN_FAIL_ESTABLISH"
+            22 -> "GATT_CONN_LMP_TIMEOUT"
+            62 -> "GATT_CONN_CANCEL"
+            133 -> "GATT_ERROR (133)"
+            137 -> "GATT_CONN_TERMINATE_DUE_TO_MIC_FAILURE"
+            257 -> "GATT_FAILURE"
             200 -> "ERROR_GATT_WRITE_NOT_ALLOWED"
             201 -> "ERROR_GATT_WRITE_REQUEST_BUSY"
-            257 -> "GATT_FAILURE"
-            else -> "UNKNOWN"
+            else -> "UNKNOWN ($status)"
         }
     }
 }
