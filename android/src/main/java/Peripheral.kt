@@ -607,9 +607,6 @@ class Peripheral(
 
     @SuppressLint("MissingPermission")
     private fun processWriteQueue() {
-
-
-        val start = System.currentTimeMillis()
         synchronized(this.writeQueueLock) {
             if (this.activeWrite == null) {
                 { // filter timed-out or over-attempt writes out of the queue before starting the next one
