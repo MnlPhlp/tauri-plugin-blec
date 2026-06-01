@@ -8,6 +8,7 @@ use futures::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch, Mutex};
@@ -37,13 +38,13 @@ struct HandlerState {
 
 impl HandlerState {
     fn get_charac(&self, uuid: Uuid) -> Result<&Characteristic, Error> {
-        info!("getting characteristic {uuid}");
+        trace!("getting characteristic {uuid}");
         let charac = self.characs.iter().find(|c| c.uuid == uuid);
         charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
     }
 
     fn get_charac_from_service(&self, uuid: Uuid, service: Uuid) -> Result<&Characteristic, Error> {
-        info!("getting characteristic {uuid} from service {service}");
+        trace!("getting characteristic {uuid} from service {service}");
         let charac = self
             .characs
             .iter()
@@ -62,6 +63,33 @@ pub struct Handler {
     connected_dev: Mutex<Option<Peripheral>>,
     /// Lock to serialize BLE GATT operations (only one read/write can be in flight at a time)
     gatt_op_lock: Mutex<()>,
+
+    write_timeout_in_ms: AtomicU32,
+    skip_waiting_for_write_to_complete: AtomicBool,
+}
+
+impl Handler {
+    pub fn set_write_behaviour(&self, timeout_in_ms: Option<u32>, skip_waiting_on_success: bool) {
+        self.write_timeout_in_ms.store(
+            timeout_in_ms.unwrap_or(0),
+            std::sync::atomic::Ordering::Release,
+        );
+        self.skip_waiting_for_write_to_complete.store(
+            skip_waiting_on_success,
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+
+    #[allow(dead_code)] // TODO: remove once implemented on all platforms
+    pub(crate) fn get_write_behaviour(&self) -> (u32, bool) {
+        let timeout = self
+            .write_timeout_in_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let skip_waiting_on_success = self
+            .skip_waiting_for_write_to_complete
+            .load(std::sync::atomic::Ordering::Relaxed);
+        (timeout, skip_waiting_on_success)
+    }
 }
 
 async fn get_central() -> Result<Adapter, Error> {
@@ -151,6 +179,8 @@ impl Handler {
                 listen_handle: None,
                 characs: vec![],
             }),
+            write_timeout_in_ms: AtomicU32::new(0),
+            skip_waiting_for_write_to_complete: AtomicBool::new(false),
         })
     }
 
@@ -506,7 +536,7 @@ impl Handler {
         let adapter = adapter.clone();
         state.scan_task = Some(tokio::task::spawn(async move {
             self_devices.lock().await.clear();
-            let loops = timeout / 200;
+            let loops = std::cmp::max(1, timeout / 200);
             let mut devices;
             for _ in 0..loops {
                 sleep(Duration::from_millis(200)).await;
@@ -674,7 +704,7 @@ impl Handler {
             data.len(),
             data
         );
-        run_with_timeout(dev.write(&charac, data, write_type.into()), "write").await?;
+        dev.write(&charac, data, write_type.into()).await?;
         Ok(())
     }
 
@@ -827,14 +857,32 @@ impl Handler {
                     .send(true)
                     .expect("failed to send connected update");
                 debug!("connected_tx updated");
+                return;
             } else {
-                // event not for currently connected device, ignore
-                warn!("Unexpected connect event for device {peripheral_id}, connected device is {connected_device}");
+                error!("Unexpected connect event for device {peripheral_id}, connected device is {connected_device}");
+                // TODO: disconnect and retry connecting to the requested device??
+
+                if let Err(e) = self.disconnect().await {
+                    error!("Failed to disconnect from device {connected_device}: {e}");
+                }
             }
+        }
+
+        let pid = peripheral_id.to_string();
+        if let Some((_, device)) = self
+            .devices
+            .lock()
+            .await
+            .iter()
+            .find(|(id, _device)| **id == pid)
+        {
+            self.connected_dev.lock().await.replace(device.clone());
         } else {
-            warn!(
-                "connect event for device {peripheral_id} received without waiting for connection"
-            );
+            error!("Received connect event for unknown device {peripheral_id}");
+            // TODO: disconnect?
+            if let Err(e) = self.disconnect().await {
+                error!("Failed to disconnect from device {peripheral_id:?}: {e}");
+            }
         }
     }
 
