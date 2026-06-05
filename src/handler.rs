@@ -193,6 +193,17 @@ impl Handler {
         *self.connected_rx.borrow()
     }
 
+    /// Returns mtu (Maximum Transfer Unit) of the currently connected device
+    /// # Errors
+    /// Returns an error if no device is connected
+    pub async fn mtu(&self) -> Result<u16, Error> {
+        let connected_dev = self.connected_dev.lock().await;
+        let Some(dev) = connected_dev.as_ref() else {
+            return Err(Error::NoDeviceConnected);
+        };
+        Ok(dev.mtu())
+    }
+
     /// Returns true if the adapter is scanning
     pub async fn is_scanning(&self) -> bool {
         if let Some(handle) = &self.state.lock().await.scan_task {
