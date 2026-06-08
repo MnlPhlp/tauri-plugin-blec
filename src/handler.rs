@@ -90,6 +90,15 @@ impl Handler {
             .load(std::sync::atomic::Ordering::Relaxed);
         (timeout, skip_waiting_on_success)
     }
+
+    /// Sets the MTU that is requested when connecting on Android.
+    /// Other plarforms will always negotiate the max by default
+    /// The actual MTU can be retrieved using the `mtu` method after connecting
+    /// 0 means no mtu request will be made
+    #[cfg(target_os = "android")]
+    pub fn set_android_mtu_request(mtu: u16) {
+        crate::android::REQUESTED_MTU.store(mtu, std::sync::atomic::Ordering::Release);
+    }
 }
 
 async fn get_central() -> Result<Adapter, Error> {

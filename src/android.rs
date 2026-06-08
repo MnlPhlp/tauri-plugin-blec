@@ -33,6 +33,7 @@ use crate::models::BondingPeripheral;
 type Result<T> = std::result::Result<T, btleplug::Error>;
 
 static HANDLE: OnceCell<PluginHandle<Wry>> = OnceCell::new();
+pub static REQUESTED_MTU: AtomicU16 = AtomicU16::new(517);
 
 fn get_handle() -> &'static PluginHandle<Wry> {
     HANDLE.get().expect("plugin handle not initialized")
@@ -428,17 +429,20 @@ impl btleplug::api::Peripheral for Peripheral {
         )
         .await?;
         info!("connected to: {:?}", self.address);
-        // debug!("requesting mtu");
-        // let mtu: MtuResponse = call_plugin_with_timeout(
-        //     "request_mtu",
-        //     MtuParams {
-        //         address: self.address,
-        //         mtu: 517,
-        //     },
-        // )
-        // .await?;
-        // info!("mtu set to: {:?}", mtu.mtu);
-        // self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
+        let requested_mtu = REQUESTED_MTU.load(Ordering::Relaxed);
+        if requested_mtu > 0 {
+            debug!("requesting mtu");
+            let mtu: MtuResponse = call_plugin_with_timeout(
+                "request_mtu",
+                MtuParams {
+                    address: self.address,
+                    mtu: requested_mtu,
+                },
+            )
+            .await?;
+            info!("mtu set to: {:?}", mtu.mtu);
+            self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
+        }
         Ok(())
     }
 
