@@ -257,6 +257,37 @@ pub(crate) async fn get_adapter_state<R: Runtime>(_app: AppHandle<R>) -> Result<
     Ok(state)
 }
 
+#[command]
+pub(crate) async fn mtu<R: Runtime>(_app: AppHandle<R>) -> Result<u16> {
+    let handler = get_handler()?;
+    let mtu = handler.mtu().await?;
+    Ok(mtu)
+}
+
+#[command]
+pub(crate) fn set_write_behavior<R: Runtime>(
+    _app: AppHandle<R>,
+    timeout_in_ms: Option<u32>,
+    skip_waiting_on_success: bool,
+) -> Result<()> {
+    let handler = get_handler()?;
+    handler.set_write_behaviour(timeout_in_ms, skip_waiting_on_success);
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[command]
+pub(crate) fn set_android_mtu<R: Runtime>(_app: AppHandle<R>, mtu: u16) -> Result<()> {
+    crate::handler::Handler::set_android_mtu_request(mtu);
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+#[command]
+pub(crate) fn set_android_mtu<R: Runtime>(_app: AppHandle<R>, _mtu: u16) -> Result<()> {
+    Ok(())
+}
+
 pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
     tauri::generate_handler![
         scan,
@@ -274,6 +305,9 @@ pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
         scanning_state,
         check_permissions,
         list_services,
-        get_adapter_state
+        get_adapter_state,
+        mtu,
+        set_write_behavior,
+        set_android_mtu
     ]
 }

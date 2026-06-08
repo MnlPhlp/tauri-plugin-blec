@@ -247,3 +247,36 @@ export async function listServices(
   });
   return res;
 }
+
+/**
+ * Get the MTU (Maximum Transfer Unit) of the currently connected device.
+ * @returns The MTU value in bytes
+ */
+export async function getMtu(): Promise<number> {
+  return await invoke<number>("plugin:blec|mtu");
+}
+
+/**
+ * Configure write behaviour for BLE write operations.
+ * @param timeoutInMs - Timeout for write operations in milliseconds. null/undefined means no timeout.
+ * @param skipWaitingOnSuccess - If true, do not wait for write completion confirmation on success.
+ */
+export async function setWriteBehavior(
+  timeoutInMs: number | null | undefined,
+  skipWaitingOnSuccess: boolean
+): Promise<void> {
+  await invoke("plugin:blec|set_write_behavior", {
+    timeoutInMs,
+    skipWaitingOnSuccess,
+  });
+}
+
+/**
+ * Set the MTU that will be requested when connecting on Android.
+ * Other platforms negotiate the maximum MTU by default.
+ * The actual MTU can be retrieved using `getMtu()` after connecting.
+ * @param mtu - The MTU value to request. Use 0 to skip the MTU request.
+ */
+export async function setAndroidMtu(mtu: number): Promise<void> {
+  await invoke("plugin:blec|set_android_mtu", { mtu });
+}
