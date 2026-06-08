@@ -67,11 +67,7 @@ class Peripheral(
     private val writeCount: AtomicInt = AtomicInt(0)
 
     private fun runOnMain(block: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            block()
-        } else {
-            retryHandler.post(block)
-        }
+        retryHandler.postDelayed(block, 1L)
     }
 
     private data class PendingWrite(
@@ -147,7 +143,7 @@ class Peripheral(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            Log.i("Peripheral", "onServicesDiscovered status $status, services ${gatt.services}")
+            Log.d("Peripheral", "onServicesDiscovered status $status, services ${gatt.services}")
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 // Android BLE edge-case handling: status 133, 62, 129 are
                 // commonly transient and can succeed on a second attempt.
@@ -249,7 +245,7 @@ class Peripheral(
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
-            Log.i("Peripheral", "onCharacteristicWrite for ${characteristic.uuid} with status $status")
+            Log.v("Peripheral", "onCharacteristicWrite for ${characteristic.uuid} with status $status")
             val key = Pair(characteristic.uuid, characteristic.service.uuid)
             
             @Suppress("DEPRECATION")
@@ -267,13 +263,13 @@ class Peripheral(
             }
 
             if (success) {
-                Log.i("Peripheral", "Write with id $current.id succeeded!")
+                Log.v("Peripheral", "Write with id $current.id succeeded!")
                 this@Peripheral.activeWrite = null
                 current.invoke?.resolve()
             } else {
                 current.timeSentAt = 0L
 
-                Log.i("Peripheral", "Write with id $current.id attempt $current.attempt failed!")
+                Log.v("Peripheral", "Write with id $current.id attempt $current.attempt failed!")
 
                 if (current.attempt < this@Peripheral.maxAttempts && !this@Peripheral.isWriteTimedOut(current)) {
                     current.attempt += 1
@@ -577,16 +573,11 @@ class Peripheral(
         var shouldStart = false
         synchronized(this.writeQueueLock) {
             this.writeQueue.addLast(op)
-            if (this.activeWrite == null) {
-                if (this.writeQueue.isNotEmpty()) {
-                    this.activeWrite = this.writeQueue.removeFirst()
-                    shouldStart = true
-                }
-            }
+            shouldStart = this.activeWrite == null
         }
 
         if (args.skipWaitingForWriteToComplete) {
-            Log.i(
+            Log.v(
                 "Peripheral",
                 "write: skipWaitingForWriteToComplete is true, resolving immediately without waiting for write to complete"
             )
@@ -594,7 +585,7 @@ class Peripheral(
             invoke.resolve()
             val duration = System.currentTimeMillis() - start
             if (duration > 5) {
-                Log.i("Peripheral", "write: skipWaitingForWriteToComplete - invoke.resolve took $duration ms")
+                Log.d("Peripheral", "write: skipWaitingForWriteToComplete - invoke.resolve took $duration ms")
             }
         }
 
@@ -607,37 +598,37 @@ class Peripheral(
 
     @SuppressLint("MissingPermission")
     private fun processWriteQueue() {
-        synchronized(this.writeQueueLock) {
-            if (this.activeWrite == null) {
-                { // filter timed-out or over-attempt writes out of the queue before starting the next one
-                    val to_reject: MutableList<PendingWrite> = mutableListOf()
+        // this function always runs on the main thread; therefore we do not need to synchronize activeWrite
+        if (this.activeWrite == null) {
+            synchronized(this.writeQueueLock) {
+                // filter timed-out or over-attempt writes out of the queue before starting the next one
+                val to_reject: MutableList<PendingWrite> = mutableListOf()
 
-                    if (this.activeWrite == null) {
-                        val queueSize = this.writeQueue.size
-                        var iter = 0;
-                        while (iter < queueSize) {
-                            val pendingWrite = this.writeQueue.removeFirst()
-                            if (pendingWrite.attempt > maxAttempts || isWriteTimedOut(pendingWrite)) {
-                                to_reject.add(pendingWrite)
-                            } else {
-                                this.writeQueue.addLast(pendingWrite)
-                            }
-                            iter++
-                        }
-                    }
-
-                    for (iter in to_reject) {
-                        if (iter.attempt > maxAttempts) {
-                            Log.w(
-                                "Peripheral",
-                                "Discarding queued write to ${iter.key.first} after ${iter.attempt} attempts without success"
-                            )
+                if (this.activeWrite == null) {
+                    val queueSize = this.writeQueue.size
+                    var iter = 0;
+                    while (iter < queueSize) {
+                        val pendingWrite = this.writeQueue.removeFirst()
+                        if (pendingWrite.attempt > maxAttempts || isWriteTimedOut(pendingWrite)) {
+                            to_reject.add(pendingWrite)
                         } else {
-                            Log.w(
-                                "Peripheral",
-                                "Discarding queued write to ${iter.key.first} that timed out in queue after waiting for ${iter.timeoutAfter - System.currentTimeMillis()} ms"
-                            )
+                            this.writeQueue.addLast(pendingWrite)
                         }
+                        iter++
+                    }
+                }
+
+                for (iter in to_reject) {
+                    if (iter.attempt > maxAttempts) {
+                        Log.w(
+                            "Peripheral",
+                            "Discarding queued write to ${iter.key.first} after ${iter.attempt} attempts without success"
+                        )
+                    } else {
+                        Log.w(
+                            "Peripheral",
+                            "Discarding queued write to ${iter.key.first} that timed out in queue after waiting for ${iter.timeoutAfter - System.currentTimeMillis()} ms"
+                        )
                     }
                 }
 
@@ -645,106 +636,106 @@ class Peripheral(
                     this.activeWrite = this.writeQueue.removeFirst()
                 }
             }
+        }
 
-            val current = this.activeWrite ?: return
-            // already sent, waiting for onCharacteristicWrite callback.
-            if (current.timeSentAt > 0L) {
-                val elapsedSinceSent = System.currentTimeMillis() - current.timeSentAt
+        val current = this.activeWrite ?: return
+        // already sent, waiting for onCharacteristicWrite callback.
+        if (current.timeSentAt > 0L) {
+            val elapsedSinceSent = System.currentTimeMillis() - current.timeSentAt
 
-                val waitUntilRetry =
-                    if (current.withResponse) {
-                        writeCallbackWaitWithResponseMs
-                    } else {
-                        writeCallbackWaitNoResponseMs
-                    };
+            val waitUntilRetry =
+                if (current.withResponse) {
+                    writeCallbackWaitWithResponseMs
+                } else {
+                    writeCallbackWaitNoResponseMs
+                };
 
-                if (elapsedSinceSent < waitUntilRetry) {
-                    retryHandler.postDelayed(
-                        { processWriteQueue() }, waitUntilRetry
-                    )
-                    return
-                }
-
-                // Callback window elapsed without a response — resend.
-                current.timeSentAt = 0L
+            if (elapsedSinceSent < waitUntilRetry) {
+                retryHandler.postDelayed(
+                    { processWriteQueue() }, waitUntilRetry
+                )
+                return
             }
 
-            val charac = current.characteristic
-            val op = current
-            // TODO: ensure we correctly clear write queue when disconnecting -- should we trigger a disconnect here if gatt is null??
-            val gatt = this.gatt ?: return
-            val writeType = if (op.withResponse) {
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            // Callback window elapsed without a response — resend.
+            current.timeSentAt = 0L
+        }
+
+        val charac = current.characteristic
+        val op = current
+        // TODO: ensure we correctly clear write queue when disconnecting -- should we trigger a disconnect here if gatt is null??
+        val gatt = this.gatt ?: return
+        val writeType = if (op.withResponse) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+
+        val status: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(charac, op.data, writeType)
+        } else {
+            @Suppress("DEPRECATION")
+            charac.writeType = writeType
+            @Suppress("DEPRECATION")
+            charac.value = op.data
+            @Suppress("DEPRECATION")
+            if (gatt.writeCharacteristic(charac)) {
+                BluetoothGatt.GATT_SUCCESS
             } else {
-                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                BluetoothGatt.GATT_FAILURE
+            }
+        }
+
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            if (status == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY) {
+                discardTimedOutQueuedWrites()
+            } else {
+                Log.w(
+                    "Peripheral",
+                    "Failed to start write on ${charac.uuid} (status $status, attempt ${op.attempt}/$maxAttempts)"
+                )
+                op.attempt += 1
             }
 
-            val status: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeCharacteristic(charac, op.data, writeType)
-            } else {
-                @Suppress("DEPRECATION")
-                charac.writeType = writeType
-                @Suppress("DEPRECATION")
-                charac.value = op.data
-                @Suppress("DEPRECATION")
-                if (gatt.writeCharacteristic(charac)) {
-                    BluetoothGatt.GATT_SUCCESS
-                } else {
-                    BluetoothGatt.GATT_FAILURE
+            if (isWriteTimedOut(op)) {
+                synchronized(this.writeQueueLock) {
+                    if (this.activeWrite == current) {
+                        this.activeWrite = null
+                    }
                 }
+                op.invoke?.reject("Write to characteristic ${charac.uuid} timed out")
+                return processWriteQueue()
             }
 
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                if (status == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY) {
-                    discardTimedOutQueuedWrites()
-                } else {
-                    Log.w(
-                        "Peripheral",
-                        "Failed to start write on ${charac.uuid} (status $status, attempt ${op.attempt}/$maxAttempts)"
-                    )
-                    op.attempt += 1
-                }
-
-                if (isWriteTimedOut(op)) {
-                    synchronized(this.writeQueueLock) {
-                        if (this.activeWrite == current) {
-                            this.activeWrite = null
-                        }
+            if (op.attempt < maxAttempts) {
+                synchronized(this.writeQueueLock) {
+                    if (this.activeWrite == current) {
+                        this.activeWrite = op
                     }
-                    op.invoke?.reject("Write to characteristic ${charac.uuid} timed out")
-                    return processWriteQueue()
                 }
-
-                if (op.attempt < maxAttempts) {
-                    synchronized(this.writeQueueLock) {
-                        if (this.activeWrite == current) {
-                            this.activeWrite = op
-                        }
-                    }
-                    retryHandler.postDelayed({
-                        processWriteQueue()
-                    }, writeRetryDelayMs)
-                } else {
-                    synchronized(this.writeQueueLock) {
-                        if (this.activeWrite == current) {
-                            this.activeWrite = null
-                        }
-                    }
-                    op.invoke?.reject(
-                        "Failed to start write on characteristic ${charac.uuid} after ${op.attempt} attempts: status $status (${
-                            statusCodeName(
-                                status
-                            )
-                        })"
-                    )
-                    return processWriteQueue()
-                }
-            } else {
-                op.timeSentAt = System.currentTimeMillis()
                 retryHandler.postDelayed({
                     processWriteQueue()
-                }, 5L)
+                }, writeRetryDelayMs)
+            } else {
+                synchronized(this.writeQueueLock) {
+                    if (this.activeWrite == current) {
+                        this.activeWrite = null
+                    }
+                }
+                op.invoke?.reject(
+                    "Failed to start write on characteristic ${charac.uuid} after ${op.attempt} attempts: status $status (${
+                        statusCodeName(
+                            status
+                        )
+                    })"
+                )
+                return processWriteQueue()
             }
+        } else {
+            op.timeSentAt = System.currentTimeMillis()
+            retryHandler.postDelayed({
+                processWriteQueue()
+            }, 5L)
         }
     }
 
