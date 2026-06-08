@@ -108,7 +108,6 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
     }
 
     fun checkPermissions(allowIbeacons: Boolean, askIfDenied: Boolean): Boolean {
-
         var permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,

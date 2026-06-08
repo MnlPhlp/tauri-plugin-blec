@@ -144,7 +144,17 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val service: UUID? = null
         val data: ByteArray? = null
         val withResponse: Boolean = true
+        
+        // if a write times out, we will not write the data
+        // a timeout of 0 means no timeout
+        val timeout: Int = 0
+        
+        // if true, we will enqueue the write and immediately return;
+        // the write is guaranteed to be sent, if the connection persists,
+        // but the plugin won't know when it has happened
+        val skipWaitingForWriteToComplete: Boolean = false
     }
+    
     @Command
     fun write(invoke:Invoke){
         val args = invoke.parseArgs(WriteParams::class.java)
@@ -153,7 +163,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
             invoke.reject("write: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
-        device.write(invoke)
+        device.write(invoke, args)
     }
 
     @InvokeArg

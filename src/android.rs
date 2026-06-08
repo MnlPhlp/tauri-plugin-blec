@@ -428,17 +428,17 @@ impl btleplug::api::Peripheral for Peripheral {
         )
         .await?;
         info!("connected to: {:?}", self.address);
-        debug!("requesting mtu");
-        let mtu: MtuResponse = call_plugin_with_timeout(
-            "request_mtu",
-            MtuParams {
-                address: self.address,
-                mtu: 517,
-            },
-        )
-        .await?;
-        info!("mtu set to: {:?}", mtu.mtu);
-        self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
+        // debug!("requesting mtu");
+        // let mtu: MtuResponse = call_plugin_with_timeout(
+        //     "request_mtu",
+        //     MtuParams {
+        //         address: self.address,
+        //         mtu: 517,
+        //     },
+        // )
+        // .await?;
+        // info!("mtu set to: {:?}", mtu.mtu);
+        // self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
         Ok(())
     }
 
@@ -471,6 +471,9 @@ impl btleplug::api::Peripheral for Peripheral {
         data: &[u8],
         write_type: WriteType,
     ) -> Result<()> {
+        let (timeout, skip_waiting_for_completion) = crate::get_handler()
+            .map(|handler| handler.get_write_behaviour())
+            .unwrap_or((0, false));
         call_plugin_with_timeout::<_, ()>(
             "write",
             serde_json::json!({
@@ -479,6 +482,8 @@ impl btleplug::api::Peripheral for Peripheral {
                 "service": characteristic.service_uuid,
                 "data": data,
                 "withResponse": matches!(write_type, WriteType::WithResponse),
+                "timeout": timeout,
+                "skipWaitingForWriteToComplete": skip_waiting_for_completion
             }),
         )
         .await?;
