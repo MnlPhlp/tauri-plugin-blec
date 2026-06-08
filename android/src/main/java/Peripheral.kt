@@ -263,10 +263,13 @@ class Peripheral(
             }
 
             if (success) {
+                Log.v("Peripheral", "Write with id $current.id succeeded!")
                 this@Peripheral.activeWrite = null
                 current.invoke?.resolve()
             } else {
                 current.timeSentAt = 0L
+
+                Log.v("Peripheral", "Write with id $current.id attempt $current.attempt failed!")
 
                 if (current.attempt < this@Peripheral.maxAttempts && !this@Peripheral.isWriteTimedOut(current)) {
                     current.attempt += 1
@@ -598,35 +601,34 @@ class Peripheral(
         // this function always runs on the main thread; therefore we do not need to synchronize activeWrite
         if (this.activeWrite == null) {
             synchronized(this.writeQueueLock) {
-                { // filter timed-out or over-attempt writes out of the queue before starting the next one
-                    val to_reject: MutableList<PendingWrite> = mutableListOf()
+                // filter timed-out or over-attempt writes out of the queue before starting the next one
+                val to_reject: MutableList<PendingWrite> = mutableListOf()
 
-                    if (this.activeWrite == null) {
-                        val queueSize = this.writeQueue.size
-                        var iter = 0;
-                        while (iter < queueSize) {
-                            val pendingWrite = this.writeQueue.removeFirst()
-                            if (pendingWrite.attempt > maxAttempts || isWriteTimedOut(pendingWrite)) {
-                                to_reject.add(pendingWrite)
-                            } else {
-                                this.writeQueue.addLast(pendingWrite)
-                            }
-                            iter++
-                        }
-                    }
-
-                    for (iter in to_reject) {
-                        if (iter.attempt > maxAttempts) {
-                            Log.w(
-                                "Peripheral",
-                                "Discarding queued write to ${iter.key.first} after ${iter.attempt} attempts without success"
-                            )
+                if (this.activeWrite == null) {
+                    val queueSize = this.writeQueue.size
+                    var iter = 0;
+                    while (iter < queueSize) {
+                        val pendingWrite = this.writeQueue.removeFirst()
+                        if (pendingWrite.attempt > maxAttempts || isWriteTimedOut(pendingWrite)) {
+                            to_reject.add(pendingWrite)
                         } else {
-                            Log.w(
-                                "Peripheral",
-                                "Discarding queued write to ${iter.key.first} that timed out in queue after waiting for ${iter.timeoutAfter - System.currentTimeMillis()} ms"
-                            )
+                            this.writeQueue.addLast(pendingWrite)
                         }
+                        iter++
+                    }
+                }
+
+                for (iter in to_reject) {
+                    if (iter.attempt > maxAttempts) {
+                        Log.w(
+                            "Peripheral",
+                            "Discarding queued write to ${iter.key.first} after ${iter.attempt} attempts without success"
+                        )
+                    } else {
+                        Log.w(
+                            "Peripheral",
+                            "Discarding queued write to ${iter.key.first} that timed out in queue after waiting for ${iter.timeoutAfter - System.currentTimeMillis()} ms"
+                        )
                     }
                 }
 

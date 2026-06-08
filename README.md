@@ -22,7 +22,7 @@ Or manually add it to the `src-tauri/Cargo.toml`
 
 ```toml
 [dependencies]
-tauri-plugin-blec = "0.4"
+tauri-plugin-blec = "0.12"
 ```
 
 ### Install the js bindings
