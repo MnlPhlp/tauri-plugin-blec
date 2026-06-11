@@ -23,6 +23,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelUuid
 import android.provider.Settings
+import android.util.Log
 import android.util.SparseArray
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
@@ -95,6 +96,10 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
     private var scanner: BluetoothLeScanner? = null
     private var manager: BluetoothManager? = null
     private var scanCb: ScanCallback? = null
+    private val requestCounter = java.util.concurrent.atomic.AtomicInteger(0)
+    private var didAskForBTPermissions = false
+    private var didAskForLocPermission = false
+
 
     private fun markFirstPermissionRequest(perm: String) {
         val sharedPreference: SharedPreferences =
@@ -106,6 +111,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         return activity.getSharedPreferences("PREFS_PERMISSION_FIRST_TIME_ASKING", MODE_PRIVATE)
             .getBoolean(perm, true)
     }
+    
 
     fun checkPermissions(allowIbeacons: Boolean, askIfDenied: Boolean): Boolean {
         var permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -119,25 +125,29 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                 Manifest.permission.BLUETOOTH,
             )
         }
+
         if (allowIbeacons) {
             permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
-        for (perm in permissions){
+        
+        var hasPermissions = true;
+        for (perm in permissions) {
             if (ActivityCompat.checkSelfPermission(
                     activity,
                     perm
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                if (firstPermissionRequest(perm) || activity.shouldShowRequestPermissionRationale(perm)) {
+                val didAskBefore = if (perm == Manifest.permission.ACCESS_FINE_LOCATION) didAskForLocPermission else didAskForBTPermissions
+                if (!didAskBefore || activity.shouldShowRequestPermissionRationale(perm)) {
                     // this will open the permission dialog
-                    markFirstPermissionRequest(perm)
-                    activity.requestPermissions(permissions, 1)
-                    return false
-                } else{
-                    if (!askIfDenied) {
-                        return false
-                    }
+                    val requestId = requestCounter.getAndIncrement() and 0x3FFF;
+                    val requestCode = requestId or
+                        (if (allowIbeacons) 0x8000 else 0) or
+                        (if (askIfDenied) 0x4000 else 0)
 
+                    Log.d("BleClient", "Requesting permission $perm with id $requestId.")
+                    activity.requestPermissions(permissions, requestCode)
+                } else if (askIfDenied) {
                     // this will open settings which asks for permission
                     val intent = Intent(
                         Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -145,11 +155,55 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                     )
                     activity.startActivity(intent)
                     Toast.makeText(activity, "Allow Permission: $perm", Toast.LENGTH_SHORT).show()
-                    return false
+                }
+
+                hasPermissions = false
+            }
+        }
+        return hasPermissions
+    }
+
+    fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        val allowIbeacons = (requestCode and 0x8000) != 0
+        val askIfDenied   = (requestCode and 0x4000) != 0
+        val requestId = requestCode and 0x3FFF
+
+        var askAgain = false
+        if (permissions.isEmpty() || grantResults.isEmpty()) {
+            Log.d("BleClient", "Permission request $requestId was cancelled.")
+            askAgain = true
+        } else {
+            Log.d("BleClient", "Received result for permission request $requestCode.")
+            
+            for (i in permissions.indices) {
+                val perm = permissions[i]
+                if (perm == Manifest.permission.ACCESS_FINE_LOCATION) { 
+                    didAskForLocPermission = true
+                } else {
+                    didAskForBTPermissions = true
+                }
+
+                val resultCode = grantResults[i]
+                when (resultCode) {
+                    PackageManager.PERMISSION_GRANTED -> {
+                        Log.d("BleClient", "User granted ${permissions[i]} permission after request!")
+                    }
+                    PackageManager.PERMISSION_DENIED -> {
+                        if (ActivityCompat.shouldShowRequestPermissionRationale(activity, permissions[i])) {
+                            Log.d("BleClient", "User denied ${permissions[i]} permission, asking again.")
+                            askAgain = true
+                        } else {
+                            Log.d("BleClient", "User denied and SUPPRESSED ${permissions[i]} permission.")
+                        }
+                    }
+                    else -> Log.e("BleClient", "Unknown result code: $resultCode")
                 }
             }
         }
-        return true
+
+        if (askAgain) {
+            checkPermissions(allowIbeacons, askIfDenied)
+        }
     }
 
     @InvokeArg

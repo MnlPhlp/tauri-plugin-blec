@@ -215,7 +215,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(CheckPermissionsParams::class.java)
         val granted = client.checkPermissions(args.allowIbeacons, args.askIfDenied);
         val ret = JSObject();
-        ret.put("result",granted)
+        ret.put("result", granted)
         invoke.resolve(ret);
     }
 
