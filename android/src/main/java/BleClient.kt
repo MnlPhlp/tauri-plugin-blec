@@ -23,6 +23,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelUuid
 import android.provider.Settings
+import android.util.Log
 import android.util.SparseArray
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
@@ -102,56 +103,6 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         sharedPreference.edit().putBoolean(perm, false).apply()
     }
 
-    private fun firstPermissionRequest(perm: String): Boolean {
-        return activity.getSharedPreferences("PREFS_PERMISSION_FIRST_TIME_ASKING", MODE_PRIVATE)
-            .getBoolean(perm, true)
-    }
-
-    fun checkPermissions(allowIbeacons: Boolean, askIfDenied: Boolean): Boolean {
-        var permissions =  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT
-            )
-        } else {
-            arrayOf(
-                Manifest.permission.BLUETOOTH_ADMIN,
-                Manifest.permission.BLUETOOTH,
-            )
-        }
-        if (allowIbeacons) {
-            permissions += Manifest.permission.ACCESS_FINE_LOCATION
-        }
-        for (perm in permissions){
-            if (ActivityCompat.checkSelfPermission(
-                    activity,
-                    perm
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                if (firstPermissionRequest(perm) || activity.shouldShowRequestPermissionRationale(perm)) {
-                    // this will open the permission dialog
-                    markFirstPermissionRequest(perm)
-                    activity.requestPermissions(permissions, 1)
-                    return false
-                } else{
-                    if (!askIfDenied) {
-                        return false
-                    }
-
-                    // this will open settings which asks for permission
-                    val intent = Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:${activity.packageName}")
-                    )
-                    activity.startActivity(intent)
-                    Toast.makeText(activity, "Allow Permission: $perm", Toast.LENGTH_SHORT).show()
-                    return false
-                }
-            }
-        }
-        return true
-    }
-
     @InvokeArg
     class ScanParams {
         val services: ArrayList<String> = ArrayList()
@@ -166,11 +117,6 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
             return
         }
         val args = invoke.parseArgs(ScanParams::class.java)
-        // check permission
-        if (!checkPermissions(args.allowIbeacons, false)){
-            invoke.reject("Missing permissions")
-            return
-        }
 
         // get scanner
         if (scanner == null) {
