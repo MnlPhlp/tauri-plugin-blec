@@ -74,8 +74,14 @@ impl BleDevice {
             services: properties.services,
             rssi: properties.rssi,
             is_connected: peripheral.is_connected().await?,
+            // On Android `is_bonded()` performs a per-device plugin IPC call. During a
+            // scan this runs for every discovered peripheral, and if it errors (e.g. the
+            // `is_bonded` command isn't available) the `?` propagated the failure, causing
+            // `Handler::add_devices` to drop the *entire* device — so a scan silently
+            // returned no results. A failure to read bond state must not exclude the
+            // device from scan results, so default to `false` instead of propagating.
             #[cfg(target_os = "android")]
-            is_bonded: peripheral.is_bonded().await?,
+            is_bonded: peripheral.is_bonded().await.unwrap_or(false),
             #[cfg(not(target_os = "android"))]
             is_bonded: false,
             tx_power_level: properties.tx_power_level,
