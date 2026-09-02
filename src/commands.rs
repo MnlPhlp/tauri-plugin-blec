@@ -171,7 +171,7 @@ async fn subscribe_channel(
     service: Option<Uuid>,
 ) -> Result<mpsc::Receiver<Vec<u8>>> {
     let handler = get_handler()?;
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let (tx, rx) = tokio::sync::mpsc::channel(512);
     handler
         .subscribe(characteristic, service, move |data: Vec<u8>| {
             info!("subscribe_channel: {:?}", data);
