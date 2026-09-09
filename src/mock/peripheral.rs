@@ -129,6 +129,12 @@ impl btleplug::api::Peripheral for Peripheral {
             debug!("mock: connect to out of range device {}", self.inner.id);
             return Err(btleplug::Error::DeviceNotFound);
         }
+        if !self.inner.is_known() {
+            debug!("mock: connect to forgotten device {}", self.inner.id);
+            return Err(btleplug::Error::RuntimeError(
+                "Peripheral no longer available".to_string(),
+            ));
+        }
         if self.inner.is_connected() {
             return Ok(());
         }

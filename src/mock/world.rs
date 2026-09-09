@@ -150,6 +150,19 @@ impl MockWorld {
             .collect()
     }
 
+    /// Every device in the world, in range or not and known or not: the
+    /// system wide record a retrieval by identifier draws from.
+    pub(super) fn all_devices(&self) -> Vec<Peripheral> {
+        self.inner
+            .devices
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .map(Peripheral::new)
+            .collect()
+    }
+
     pub(super) fn device_by_id(&self, id: &PeripheralId) -> Option<Peripheral> {
         self.inner
             .devices
@@ -365,6 +378,9 @@ pub(super) struct Behaviour {
     pub disconnect: OpBehaviour,
     /// Whether a successful `disconnect()` emits `DeviceDisconnected`.
     pub disconnect_emits_event: bool,
+    /// Whether losing the link makes the backend forget the peripheral, the way
+    /// CoreBluetooth does. See [`DeviceHandle::set_forget_on_disconnect`].
+    pub forget_on_disconnect: bool,
     pub discover: OpBehaviour,
     pub read: OpBehaviour,
     pub write: OpBehaviour,
@@ -378,6 +394,7 @@ impl Default for Behaviour {
             connect_queue: VecDeque::new(),
             disconnect: OpBehaviour::Ok,
             disconnect_emits_event: true,
+            forget_on_disconnect: false,
             discover: OpBehaviour::Ok,
             read: OpBehaviour::Ok,
             write: OpBehaviour::Ok,
@@ -400,6 +417,9 @@ pub(super) struct DeviceInner {
     pub(super) gatt: BTreeSet<Service>,
     events: broadcast::Sender<CentralEvent>,
     pub(super) in_range: AtomicBool,
+    /// Whether the backend still has a record of this peripheral. Only a known
+    /// peripheral can be connected; see [`DeviceHandle::forget`].
+    pub(super) known: AtomicBool,
     pub(super) connected: AtomicBool,
     pub(super) discovered: AtomicBool,
     /// Characteristic values keyed by (service, characteristic)
@@ -419,6 +439,7 @@ impl DeviceInner {
             spec,
             events,
             in_range: AtomicBool::new(true),
+            known: AtomicBool::new(true),
             connected: AtomicBool::new(false),
             discovered: AtomicBool::new(false),
             values: Mutex::new(HashMap::new()),
@@ -439,6 +460,14 @@ impl DeviceInner {
 
     pub(super) fn is_in_range(&self) -> bool {
         self.in_range.load(Ordering::Acquire)
+    }
+
+    pub(super) fn is_known(&self) -> bool {
+        self.known.load(Ordering::Acquire)
+    }
+
+    pub(super) fn set_known(&self, known: bool) {
+        self.known.store(known, Ordering::Release);
     }
 
     pub(super) fn record(&self, op: Op) {
@@ -462,6 +491,9 @@ impl DeviceInner {
         let was_connected = self.connected.swap(false, Ordering::AcqRel);
         if !was_connected {
             return false;
+        }
+        if self.behaviour.lock().unwrap().forget_on_disconnect {
+            self.set_known(false);
         }
         self.discovered.store(false, Ordering::Release);
         self.subscriptions.lock().unwrap().clear();
@@ -548,6 +580,28 @@ impl DeviceHandle {
     #[must_use]
     pub fn is_in_range(&self) -> bool {
         self.0.is_in_range()
+    }
+
+    /// The backend forgets its record of the peripheral: it stays in range and
+    /// keeps showing up in `peripherals()`, but `connect()` fails until it is
+    /// retrieved (`retrieve_peripherals`) or a scan finds it again. This is how
+    /// CoreBluetooth treats a peripheral whose link went down.
+    pub fn forget(&self) {
+        self.0.set_known(false);
+    }
+
+    /// Whether the backend has a record of the peripheral, see [`Self::forget`].
+    #[must_use]
+    pub fn is_known(&self) -> bool {
+        self.0.is_known()
+    }
+
+    /// Whether losing the link makes the backend [`Self::forget`] the
+    /// peripheral (default false). CoreBluetooth does this, so with `true` a
+    /// device that was connected once can only be reconnected after a retrieval
+    /// or a fresh scan.
+    pub fn set_forget_on_disconnect(&self, forget: bool) {
+        self.0.behaviour.lock().unwrap().forget_on_disconnect = forget;
     }
 
     pub fn set_connect_behaviour(&self, behaviour: ConnectBehaviour) {

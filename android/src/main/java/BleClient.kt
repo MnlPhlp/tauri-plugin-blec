@@ -214,6 +214,56 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         invoke.resolve()
     }
 
+    /**
+     * Puts a known address back into [BleClientPlugin.devices] without scanning
+     * for it, so a device stays connectable after a new scan cleared the map.
+     * `getRemoteDevice` answers for any well formed address, so this says
+     * nothing about the device being in range - connecting is what finds out.
+     *
+     * A Peripheral that is still around is reused: a fresh one would not know
+     * about an open BluetoothGatt and leak it.
+     */
+    @SuppressLint("MissingPermission")
+    fun retrievePeripheral(invoke: Invoke){
+        val args = invoke.parseArgs(ConnectParams::class.java)
+        if (manager == null) {
+            manager = getSystemService(activity, BluetoothManager::class.java)
+        }
+        val adapter = manager?.adapter
+        if (adapter == null) {
+            invoke.reject("retrieve_peripheral: no bluetooth adapter available")
+            return
+        }
+        val remote = try {
+            adapter.getRemoteDevice(args.address)
+        } catch (e: IllegalArgumentException) {
+            invoke.reject("retrieve_peripheral: '${args.address}' is not a bluetooth address")
+            return
+        }
+        val existing = this.plugin.connected_devices[args.address]
+            ?: this.plugin.devices[args.address]
+        this.plugin.devices[args.address] = existing
+            ?: Peripheral(this.activity, remote, this.plugin)
+
+        var name = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            remote.alias
+        } else {
+            remote.name
+        }
+        if (name == null) {
+            name = ""
+        }
+        val connected = manager!!.getConnectionState(remote, BluetoothProfile.GATT_SERVER) ==
+            BluetoothProfile.STATE_CONNECTED
+        val bonded = remote.getBondState() == BluetoothDevice.BOND_BONDED
+        // No advertisement was received, so there is no rssi, manufacturer or
+        // service data to report.
+        val device = BleDevice(remote.address, name, 0, connected, bonded, null, null, null, null)
+        val res = JSObject()
+        res.put("result", device.toJsObject())
+        invoke.resolve(res)
+    }
+
     fun adapterState(invoke: Invoke) {
         val response = JSObject()
         manager = getSystemService(activity, BluetoothManager::class.java)

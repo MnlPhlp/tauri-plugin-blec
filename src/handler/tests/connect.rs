@@ -49,15 +49,15 @@ async fn connect_happy_path() {
     assert!(handler.is_connected());
 }
 
-/// `connect` documents that it scans by itself when no devices are known.
-/// It starts that scan (`discover`, 1 s) but calls `stop_scan` right after,
-/// which aborts the polling task before its first 200 ms poll, so the device
-/// list stays empty and the connect fails with `UnknownPeripheral`.
+/// `connect` scans by itself when it does not know the address yet, and gives
+/// up on that scan as soon as the device shows up instead of sitting out the
+/// whole `ADDRESS_SCAN_MS`.
 #[tokio::test(start_paused = true)]
 async fn connect_without_prior_scan() {
     let (world, handler) = test_world();
     let device = stress_device(&world);
 
+    let start = tokio::time::Instant::now();
     let (on_disconnect, _) = disconnect_counter();
     handler
         .connect(&device.address_string(), on_disconnect, false)
@@ -65,6 +65,56 @@ async fn connect_without_prior_scan() {
         .expect("connect without prior scan");
     assert!(handler.is_connected());
     assert!(device.is_connected());
+    assert!(!handler.is_scanning().await, "scan left running");
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "connect sat out the whole scan: {:?}",
+        start.elapsed()
+    );
+}
+
+/// A device the app connected to once has to stay connectable. CoreBluetooth
+/// drops its record of a peripheral when the link goes down while the stale
+/// handle keeps showing up in `peripherals()`, so a connect that trusts the
+/// device index fails with "Peripheral no longer available" until a new
+/// advertisement happens to arrive.
+#[tokio::test(start_paused = true)]
+async fn reconnect_after_the_backend_forgot_the_peripheral() {
+    let (world, handler) = test_world();
+    let device = stress_device(&world);
+    device.set_forget_on_disconnect(true);
+
+    connect_ok(handler, &device).await;
+    handler.disconnect().await.expect("disconnect failed");
+    settle().await;
+    assert!(!device.is_known(), "the backend kept the peripheral");
+
+    // no scan in between: the address is still in the device index, only the
+    // backend's record of the peripheral is gone
+    let (on_disconnect, _) = disconnect_counter();
+    handler
+        .connect(&device.address_string(), on_disconnect, false)
+        .await
+        .expect("reconnect after the backend forgot the peripheral");
+    assert!(handler.is_connected());
+    assert!(device.is_connected());
+}
+
+/// `discover_services` resolves the peripheral the same way, so it copes with a
+/// forgotten peripheral too.
+#[tokio::test(start_paused = true)]
+async fn discover_services_after_the_backend_forgot_the_peripheral() {
+    let (world, handler) = test_world();
+    let device = stress_device(&world);
+
+    scan(handler, ScanFilter::None).await.expect("scan failed");
+    device.forget();
+
+    let services = handler
+        .discover_services(&device.address_string())
+        .await
+        .expect("discover_services failed");
+    assert_eq!(services.len(), 2, "{services:?}");
 }
 
 /// The same scan-if-unknown path, but for a device that never shows up:

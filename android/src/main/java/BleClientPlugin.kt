@@ -78,6 +78,15 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     }
 
     @Command
+    fun retrieve_peripheral(invoke: Invoke){
+        if (hasBTPermissions()) {
+            client.retrievePeripheral(invoke)
+        } else {
+            invoke.reject("retrieve_peripheral: Missing bluetooth permission!")
+        }
+    }
+
+    @Command
     fun events(invoke: Invoke){
         this.eventChannel = invoke.parseArgs(Channel::class.java)
         invoke.resolve()

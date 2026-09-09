@@ -2,7 +2,7 @@ use crate::error::Error;
 use crate::models::{self, fmt_addr, AdapterState, BleDevice, ScanFilter, Service, Timeouts};
 use crate::ALLOW_IBEACONS;
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _};
-use btleplug::api::{CentralEvent, CentralState};
+use btleplug::api::{CentralEvent, CentralState, RetrievePeripheralsOptions};
 use btleplug::platform::PeripheralId;
 use futures::{Stream, StreamExt};
 use std::collections::HashMap;
@@ -27,6 +27,10 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 
 #[cfg(test)]
 mod tests;
+
+/// Upper bound for the scan [`Handler::scan_for`] runs to find an address that
+/// is not in the device index yet. It returns as soon as the address shows up.
+const ADDRESS_SCAN_MS: u64 = 5000;
 
 struct Listener {
     uuid: Uuid,
@@ -364,19 +368,7 @@ impl Handler {
         on_disconnect: OnDisconnectHandler,
         allow_ibeacons: bool,
     ) -> Result<(), Error> {
-        if !self.devices.lock().await.contains_key(address) {
-            // run a short scan to try and find the device
-            let (tx, mut rx) = mpsc::channel(8);
-            self.discover(Some(tx), 5000, ScanFilter::None, allow_ibeacons)
-                .await?;
-            while let Some(devices) = rx.recv().await {
-                for dev in devices {
-                    if dev.address == address {
-                        break;
-                    }
-                }
-            }
-        }
+        let mut device = self.resolve_peripheral(address, allow_ibeacons).await?;
         // cancel any running discovery
         let _ = self.stop_scan().await;
         // Never leave a previous link open: connecting to a second device while
@@ -386,10 +378,14 @@ impl Handler {
         // try up to 3 times before returning an error
         let mut connected = Ok(());
         for i in 0..3 {
-            if let Err(e) = self.connect_device(address).await {
+            if let Err(e) = self.connect_device(address, device.clone()).await {
                 if i < 2 {
                     warn!("Failed to connect device, retrying in 1s: {e}");
                     sleep(Duration::from_secs(1)).await;
+                    // A failed connect can be the backend having dropped its
+                    // record of the peripheral, so ask for a fresh one instead
+                    // of retrying with the handle that just failed.
+                    device = self.reregister(address, device).await;
                     continue;
                 }
                 connected = Err(e);
@@ -468,19 +464,103 @@ impl Handler {
         Ok(characs)
     }
 
-    async fn connect_device(&self, address: &str) -> Result<(), Error> {
+    /// The peripheral for `address`, one the backend still knows about.
+    ///
+    /// [`Self::devices`] maps addresses to the peripheral a scan last reported
+    /// for them, and that mapping outlives the backend's own record of the
+    /// peripheral: CoreBluetooth forgets a peripheral as soon as its link goes
+    /// down, and the android side clears its device map whenever a scan starts.
+    /// The stale handle is still listed by `peripherals()`, so a device the user
+    /// connected to once looks perfectly available while every connect fails
+    /// with "Peripheral no longer available" until a new advertisement arrives.
+    /// Have the backend hand out a peripheral for the id instead of trusting the
+    /// index, and only fall back to a scan when the address is unknown entirely.
+    async fn resolve_peripheral(
+        &'static self,
+        address: &str,
+        allow_ibeacons: bool,
+    ) -> Result<Peripheral, Error> {
+        let known = self.devices.lock().await.get(address).cloned();
+        let device = match known {
+            Some(device) => device,
+            None => {
+                self.scan_for(address, allow_ibeacons).await;
+                self.devices
+                    .lock()
+                    .await
+                    .get(address)
+                    .cloned()
+                    .ok_or_else(|| Error::UnknownPeripheral(address.to_string()))?
+            }
+        };
+        Ok(self.reregister(address, device).await)
+    }
+
+    /// Asks the backend to re-register the peripheral and puts whatever it
+    /// hands back into the device index.
+    ///
+    /// Best effort: a backend without a retrieval source (see
+    /// [`Central::retrieve_peripherals`]) or one that does not know the id keeps
+    /// `device`, which is still the caller's best guess.
+    async fn reregister(&'static self, address: &str, device: Peripheral) -> Peripheral {
+        let Ok(adapter) = self.get_or_init_adapter().await else {
+            return device;
+        };
+        let id = device.id();
+        let retrieved = adapter
+            .retrieve_peripherals(RetrievePeripheralsOptions {
+                identifiers: Some(vec![id.clone()]),
+                services: None,
+            })
+            .await;
+        let found = match retrieved {
+            Ok(peripherals) => peripherals.into_iter().find(|p| p.id() == id),
+            Err(btleplug::Error::NotSupported(_)) => return device,
+            Err(e) => {
+                warn!("Failed to retrieve {address} from the adapter: {e}");
+                return device;
+            }
+        };
+        let Some(found) = found else {
+            warn!("adapter does not know {address} ({id}) anymore");
+            return device;
+        };
+        debug!("re-registered {address} with the adapter");
+        self.devices
+            .lock()
+            .await
+            .insert(address.to_string(), found.clone());
+        found
+    }
+
+    /// Scans until `address` shows up or [`ADDRESS_SCAN_MS`] elapsed, so that
+    /// the device index knows the address. Best effort: errors are logged.
+    async fn scan_for(&'static self, address: &str, allow_ibeacons: bool) {
+        debug!("{address} is unknown, scanning for it");
+        let (tx, mut rx) = mpsc::channel(8);
+        if let Err(e) = self
+            .discover(Some(tx), ADDRESS_SCAN_MS, ScanFilter::None, allow_ibeacons)
+            .await
+        {
+            warn!("Failed to scan for {address}: {e}");
+            return;
+        }
+        while let Some(devices) = rx.recv().await {
+            if devices.iter().any(|dev| dev.address == address) {
+                break;
+            }
+        }
+        // The scan task panics if it cannot deliver a snapshot, so it has to be
+        // stopped before the receiver goes away, and whatever it queued in the
+        // meantime has to be drained.
+        let _ = self.stop_scan().await;
+        while rx.recv().await.is_some() {}
+    }
+
+    async fn connect_device(&self, address: &str, device: Peripheral) -> Result<(), Error> {
         trace!("connect_device: initiating connection to {address}");
         debug!("connecting to {address}",);
         let mut connected_rx = self.connected_rx.clone();
-        // clone the peripheral and release the lock: `handle_connect` needs it
-        // while we are waiting for the connection event
-        let device = {
-            let devices = self.devices.lock().await;
-            devices
-                .get(address)
-                .ok_or(Error::UnknownPeripheral(address.to_string()))?
-                .clone()
-        };
         {
             *self.connected_dev.lock().await = Some(device.clone());
             if device.is_connected().await? {
@@ -724,11 +804,12 @@ impl Handler {
     /// If the device is not connected, a connection is made in order to discover the services and characteristics
     /// After the discovery is done, the device is disconnected
     /// If the devices was already connected, it will stay connected
+    /// An address that is not known yet is scanned for, like [`Self::connect`] does
     /// # Errors
     /// Returns an error if the device is not found, if the connection fails, or if the discovery fails
     /// # Panics
     /// Panics if there is an error with the internal disconnect event
-    pub async fn discover_services(&self, address: &str) -> Result<Vec<Service>, Error> {
+    pub async fn discover_services(&'static self, address: &str) -> Result<Vec<Service>, Error> {
         let mut already_connected = self
             .connected_dev
             .lock()
@@ -743,16 +824,10 @@ impl Handler {
                 .expect("Connection exists")
                 .clone()
         } else {
-            let device = self
-                .devices
-                .lock()
-                .await
-                .get(address)
-                .ok_or(Error::UnknownPeripheral(address.to_string()))?
-                .clone();
+            let device = self.resolve_peripheral(address, false).await?;
             if device.is_connected().await? {
                 already_connected = true;
-            } else if let Err(e) = self.connect_device(address).await {
+            } else if let Err(e) = self.connect_device(address, device.clone()).await {
                 *self.connected_dev.lock().await = None;
                 let _ = self.connected_tx.send(false);
                 error!("Failed to connect for discovery: {e}");

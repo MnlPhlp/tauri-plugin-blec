@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
-use btleplug::api::{Central, CentralEvent, CentralState, ScanFilter};
+use btleplug::api::{Central, CentralEvent, CentralState, RetrievePeripheralsOptions, ScanFilter};
 use btleplug::platform::PeripheralId;
 use futures::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
@@ -47,6 +47,8 @@ impl Central for Adapter {
         }
         self.world.inner.scanning.store(true, Ordering::Release);
         for peripheral in self.world.in_range_devices() {
+            // an advertisement re-registers a peripheral the backend forgot
+            peripheral.inner().set_known(true);
             self.world.emit(CentralEvent::DeviceDiscovered(
                 peripheral.inner().id.clone(),
             ));
@@ -61,6 +63,39 @@ impl Central for Adapter {
 
     async fn peripherals(&self) -> btleplug::Result<Vec<Peripheral>> {
         Ok(self.world.in_range_devices())
+    }
+
+    /// Identifiers are looked up in the whole world, like
+    /// `retrievePeripherals(withIdentifiers:)` reads the system's record of
+    /// every peripheral it ever saw; services only match connected devices,
+    /// like `retrieveConnectedPeripherals(withServices:)`. Everything returned
+    /// is re-registered, so a peripheral the backend forgot becomes connectable
+    /// again.
+    async fn retrieve_peripherals(
+        &self,
+        options: RetrievePeripheralsOptions,
+    ) -> btleplug::Result<Vec<Peripheral>> {
+        if options.identifiers.is_none() && options.services.is_none() {
+            return Err(btleplug::Error::NotSupported(
+                "retrieve_peripherals".to_string(),
+            ));
+        }
+        let identifiers = options.identifiers.unwrap_or_default();
+        let services = options.services.unwrap_or_default();
+        let mut retrieved = vec![];
+        for peripheral in self.world.all_devices() {
+            let device = peripheral.inner();
+            let by_service = device.is_connected()
+                && services
+                    .iter()
+                    .any(|service| device.advertised_services().contains(service));
+            if !identifiers.contains(&device.id) && !by_service {
+                continue;
+            }
+            device.set_known(true);
+            retrieved.push(peripheral);
+        }
+        Ok(retrieved)
     }
 
     async fn peripheral(&self, id: &PeripheralId) -> btleplug::Result<Peripheral> {

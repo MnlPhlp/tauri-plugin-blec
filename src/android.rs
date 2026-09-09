@@ -167,6 +167,44 @@ impl btleplug::api::Central for Adapter {
         Ok(DEVICES.read().await.values().cloned().collect())
     }
 
+    /// Resolves known addresses without a scan, so a peripheral that was lost
+    /// when the device map was cleared can be used again. Only the identifier
+    /// selector is supported: `BluetoothAdapter.getRemoteDevice` takes a MAC,
+    /// and android has no equivalent of retrieving connected peripherals by
+    /// service.
+    async fn retrieve_peripherals(
+        &self,
+        options: btleplug::api::RetrievePeripheralsOptions,
+    ) -> Result<Vec<Self::Peripheral>> {
+        let Some(identifiers) = options.identifiers.filter(|_| options.services.is_none()) else {
+            return Err(btleplug::Error::NotSupported(
+                "retrieve_peripherals".to_string(),
+            ));
+        };
+        let mut peripherals = Vec::with_capacity(identifiers.len());
+        for id in identifiers {
+            // droidplug's PeripheralId is the MAC, but it does not hand out the
+            // BDAddr it wraps
+            let address = id
+                .to_string()
+                .parse()
+                .map_err(|_| btleplug::Error::DeviceNotFound)?;
+            let res: PeripheralResult = get_handle()
+                .run_mobile_plugin("retrieve_peripheral", ConnectParams { address })
+                .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+            // The java side answers from `BluetoothDevice`, which knows nothing
+            // about advertisements, so an entry a scan already filled in is
+            // kept: the point of the call is repairing the java device map.
+            let mut devices = DEVICES.write().await;
+            let peripheral = devices
+                .entry(res.result.id.clone())
+                .or_insert(res.result)
+                .clone();
+            peripherals.push(peripheral);
+        }
+        Ok(peripherals)
+    }
+
     async fn peripheral(&self, id: &PeripheralId) -> Result<Self::Peripheral> {
         DEVICES
             .read()
