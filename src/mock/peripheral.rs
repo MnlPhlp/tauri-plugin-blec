@@ -107,6 +107,7 @@ impl btleplug::api::Peripheral for Peripheral {
             service_data: spec.service_data.clone(),
             services: self.inner.advertised_services(),
             class: None,
+            appearance: None,
         }))
     }
 
