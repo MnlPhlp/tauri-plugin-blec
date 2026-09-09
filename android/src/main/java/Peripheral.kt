@@ -41,6 +41,10 @@ class Peripheral(
     private var connected = false
     private var bonded = false
     private var gatt: BluetoothGatt? = null
+    // The BluetoothGatt returned by connectGatt before the connection is
+    // established. Kept so a cancelled/failed connect can still close it
+    // instead of leaking an open client interface.
+    private var pendingGatt: BluetoothGatt? = null
     private var services: List<BluetoothGattService> = listOf()
     private val characteristics: MutableMap<Pair<UUID, UUID>, BluetoothGattCharacteristic> = mutableMapOf()
     private var onConnectionStateChange: ((connected: Boolean, error: String) -> Unit)? = null
@@ -61,8 +65,12 @@ class Peripheral(
     // maxAttempts for writes; only counts actual failure, waiting on the BT-chip (WRITE_REQUEST_BUSY) does not count as an attempt
     private val maxAttempts = 100
     private val writeRetryDelayMs = 50L
-    private val writeCallbackWaitNoResponseMs = 500L
-    private val writeCallbackWaitWithResponseMs = 750L
+    private val writeCallbackWaitNoResponseMs = 1500L
+    private val writeCallbackWaitWithResponseMs = 3000L
+
+    // If the stack never reports the disconnect, give up waiting and close the
+    // gatt ourselves so the caller isn't stuck with a link it cannot release.
+    private val disconnectFallbackMs = 8000L
 
     private val writeCount: AtomicInt = AtomicInt(0)
 
@@ -116,6 +124,7 @@ class Peripheral(
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothGatt.STATE_CONNECTED && gatt != null) {
                 this@Peripheral.connected = true
                 this@Peripheral.gatt = gatt
+                this@Peripheral.pendingGatt = null
                 this@Peripheral.onConnectionStateChange?.invoke(true, "")
                 this@Peripheral.sendEvent(Event.DeviceConnected)
             } else {
@@ -125,8 +134,9 @@ class Peripheral(
                 // otherwise repeated connect/disconnect cycles run into the
                 // 30 client limit and start failing with status 133.
                 this@Peripheral.connected = false
-                val existingGatt = this@Peripheral.gatt ?: gatt
+                val existingGatt = this@Peripheral.gatt ?: this@Peripheral.pendingGatt ?: gatt
                 this@Peripheral.gatt = null
+                this@Peripheral.pendingGatt = null
                 try {
                     existingGatt?.close()
                 } catch (e: Exception) {
@@ -138,6 +148,10 @@ class Peripheral(
                     "Disconnected. State: $newState"
                 }
                 this@Peripheral.onConnectionStateChange?.invoke(false, error)
+                // Nothing queued can complete without a connection; resolving
+                // the invokes here keeps the Rust side from waiting for calls
+                // that will never come back.
+                this@Peripheral.failPendingOperations(error)
                 this@Peripheral.sendEvent(Event.DeviceDisconnected)
             }
         }
@@ -247,9 +261,6 @@ class Peripheral(
         ) {
             Log.v("Peripheral", "onCharacteristicWrite for ${characteristic.uuid} with status $status")
             val key = Pair(characteristic.uuid, characteristic.service.uuid)
-            
-            @Suppress("DEPRECATION")
-            val value = characteristic.value ?: ByteArray(0)
 
             val current = this@Peripheral.activeWrite
             if (current == null || current.key != key) {
@@ -257,10 +268,11 @@ class Peripheral(
                 return
             }
 
-            var success = status == BluetoothGatt.GATT_SUCCESS
-            if (success && current.withResponse) {
-                success = value.contentEquals(current.data)
-            }
+            // The status is the only reliable success signal: since Android 13
+            // `writeCharacteristic(charac, value, type)` no longer updates
+            // `characteristic.value`, so comparing it against the written bytes
+            // can fail.
+            val success = status == BluetoothGatt.GATT_SUCCESS
 
             if (success) {
                 Log.v("Peripheral", "Write with id $current.id succeeded!")
@@ -389,6 +401,14 @@ class Peripheral(
     @SuppressLint("MissingPermission")
     fun connect(invoke: Invoke) {
         println("connect android implementation called")
+        if (this.connected && this.gatt != null) {
+            // Reconnecting would replace the open BluetoothGatt and leak the
+            // old one. Report the existing connection instead.
+            Log.d("Peripheral", "already connected, reusing the existing gatt")
+            invoke.resolve()
+            sendEvent(Event.DeviceConnected)
+            return
+        }
         connectAttempts = 0
         connectInternal(invoke)
     }
@@ -425,7 +445,7 @@ class Peripheral(
         // operations (often surfacing as status 133).
         runOnMain {
             try {
-                this.device.connectGatt(activity, false, this.callback, BluetoothDevice.TRANSPORT_LE)
+                this.pendingGatt = this.device.connectGatt(activity, false, this.callback, BluetoothDevice.TRANSPORT_LE)
             } catch (e: Exception) {
                 Log.e("Peripheral", "Exception during connectGatt: ${e.message}")
                 this@Peripheral.onConnectionStateChange = null
@@ -464,16 +484,40 @@ class Peripheral(
         return this.connected
     }
 
+    /// True while this peripheral holds a BluetoothGatt, established or still
+    /// being connected. Such a peripheral must not be replaced by a fresh one
+    /// from a scan result, that would leak the open gatt.
+    fun hasGatt(): Boolean {
+        return this.gatt != null || this.pendingGatt != null
+    }
+
     @SuppressLint("MissingPermission")
     fun isBonded(): Boolean {
         return this.device.bondState == BluetoothDevice.BOND_BONDED
     }
 
     @SuppressLint("MissingPermission")
-    fun disconnect(invoke: Invoke) {
+    fun disconnect(invoke: Invoke, onComplete: () -> Unit = {}) {
         val gatt = this.gatt
         if (gatt == null) {
             this.connected = false
+            // A connectGatt that never completed still holds a client
+            // interface; cancel it explicitly.
+            val pending = this.pendingGatt
+            this.pendingGatt = null
+            if (pending != null) {
+                Log.d("Peripheral", "cancelling pending connection")
+                runOnMain {
+                    try {
+                        pending.disconnect()
+                        pending.close()
+                    } catch (e: Exception) {
+                        Log.w("Peripheral", "Failed to cancel pending connection: ${e.message}")
+                    }
+                }
+            }
+            failPendingOperations("device disconnected")
+            onComplete()
             invoke.resolve()
             return
         }
@@ -481,11 +525,81 @@ class Peripheral(
         // doesn't immediately try to reconnect while the stack is still
         // cleaning up (which on Android often fails with status 133). The
         // BluetoothGatt is closed inside onConnectionStateChange.
-        this.onConnectionStateChange = { _, _ ->
-            this@Peripheral.onConnectionStateChange = null
-            invoke.resolve()
+        var finished = false
+        val finish = {
+            if (!finished) {
+                finished = true
+                this@Peripheral.onConnectionStateChange = null
+                failPendingOperations("device disconnected")
+                onComplete()
+                invoke.resolve()
+            }
         }
+        this.onConnectionStateChange = { _, _ -> finish() }
+        // Without this the caller would be stuck if the callback never arrives
+        // (which happens when the link is already gone at the radio level).
+        retryHandler.postDelayed({
+            if (!finished) {
+                Log.w("Peripheral", "no disconnect callback within ${disconnectFallbackMs}ms, closing gatt")
+                this.gatt = null
+                this.connected = false
+                try {
+                    gatt.close()
+                } catch (e: Exception) {
+                    Log.w("Peripheral", "Failed to close gatt: ${e.message}")
+                }
+                sendEvent(Event.DeviceDisconnected)
+                finish()
+            }
+        }, disconnectFallbackMs)
         runOnMain { gatt.disconnect() }
+    }
+
+    /// Rejects every write that is queued or in flight. Called when there is no
+    /// connection left to complete them on.
+    private fun failPendingWrites(reason: String) {
+        val pending: MutableList<PendingWrite> = mutableListOf()
+        synchronized(this.writeQueueLock) {
+            this.activeWrite?.let { pending.add(it) }
+            this.activeWrite = null
+            while (this.writeQueue.isNotEmpty()) {
+                pending.add(this.writeQueue.removeFirst())
+            }
+        }
+        if (pending.isEmpty()) {
+            return
+        }
+        Log.w("Peripheral", "Rejecting ${pending.size} pending write(s): $reason")
+        for (op in pending) {
+            op.invoke?.reject("Write to characteristic ${op.key.first} failed: $reason")
+        }
+    }
+
+    /// Rejects every operation waiting for a gatt callback, so no invoke is
+    /// left pending forever after the connection is gone.
+    private fun failPendingOperations(reason: String) {
+        failPendingWrites(reason)
+
+        val reads = synchronized(this.onReadInvoke) {
+            val pending = this.onReadInvoke.entries.map { Pair(it.key, it.value) }
+            this.onReadInvoke.clear()
+            pending
+        }
+        for ((key, op) in reads) {
+            op.invoke.reject("Read from characteristic ${key.first} failed: $reason")
+        }
+
+        val descriptorOp = this.onDescriptorInvoke
+        this.onDescriptorInvoke = null
+        descriptorOp?.invoke?.reject("descriptor write failed: $reason")
+
+        val mtuInvoke = this.onMtuInvoke
+        this.onMtuInvoke = null
+        mtuInvoke?.reject("mtu request failed: $reason")
+
+        val onServicesDiscovered = this.onServicesDiscovered
+        this.onServicesDiscovered = null
+        onServicesDiscovered?.invoke(false, "service discovery failed: $reason")
     }
 
     class ResCharacteristic(
@@ -642,19 +756,35 @@ class Peripheral(
         // already sent, waiting for onCharacteristicWrite callback.
         if (current.timeSentAt > 0L) {
             val elapsedSinceSent = System.currentTimeMillis() - current.timeSentAt
-
-            val waitUntilRetry =
-                if (current.withResponse) {
-                    writeCallbackWaitWithResponseMs
-                } else {
-                    writeCallbackWaitNoResponseMs
-                };
+            val waitUntilRetry = callbackWaitMs(current)
 
             if (elapsedSinceSent < waitUntilRetry) {
                 retryHandler.postDelayed(
-                    { processWriteQueue() }, waitUntilRetry
+                    { processWriteQueue() }, waitUntilRetry - elapsedSinceSent
                 )
                 return
+            }
+
+            if (current.withResponse) {
+                // A with-response write that was accepted by the stack is
+                // executed by the device even if the callback is late, so
+                // resending would trigger the operation a second time. Keep
+                // waiting until the write times out instead.
+                if (!isWriteTimedOut(current)) {
+                    retryHandler.postDelayed({ processWriteQueue() }, waitUntilRetry)
+                    return
+                }
+                synchronized(this.writeQueueLock) {
+                    if (this.activeWrite == current) {
+                        this.activeWrite = null
+                    }
+                }
+                Log.w(
+                    "Peripheral",
+                    "Write with id ${current.id} timed out waiting for the write callback"
+                )
+                current.invoke?.reject("Write to characteristic ${current.key.first} timed out waiting for the write callback")
+                return processWriteQueue()
             }
 
             // Callback window elapsed without a response — resend.
@@ -663,8 +793,14 @@ class Peripheral(
 
         val charac = current.characteristic
         val op = current
-        // TODO: ensure we correctly clear write queue when disconnecting -- should we trigger a disconnect here if gatt is null??
-        val gatt = this.gatt ?: return
+        val gatt = this.gatt
+        if (gatt == null) {
+            // Disconnected while writes were queued: nothing can complete, so
+            // reject instead of leaving the invokes pending forever.
+            Log.w("Peripheral", "No gatt server connected, dropping pending writes")
+            failPendingWrites("no gatt server connected")
+            return
+        }
         val writeType = if (op.withResponse) {
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         } else {

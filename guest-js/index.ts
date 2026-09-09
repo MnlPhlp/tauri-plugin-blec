@@ -272,6 +272,35 @@ export async function setWriteBehavior(
 }
 
 /**
+ * Timeouts for the GATT operations, in milliseconds.
+ * Fields left out keep their current value.
+ */
+export type Timeouts = {
+  /** Default: 20000 */
+  connect?: number;
+  /** Default: 15000 */
+  discoverServices?: number;
+  /** Default: 10000 */
+  read?: number;
+  /** Default: 10000 */
+  write?: number;
+  /** Default: 10000 */
+  subscribe?: number;
+  /** Default: 10000 */
+  disconnect?: number;
+};
+
+/**
+ * Configure the timeouts used for the GATT operations.
+ * These apply to the operation as a whole, including any retries the platform
+ * implementation does internally.
+ * @param timeouts - The timeouts to change, in milliseconds
+ */
+export async function setTimeouts(timeouts: Timeouts): Promise<void> {
+  await invoke("plugin:blec|set_timeouts", { timeouts });
+}
+
+/**
  * Set the MTU that will be requested when connecting on Android.
  * Other platforms negotiate the maximum MTU by default.
  * The actual MTU can be retrieved using `getMtu()` after connecting.

@@ -15,6 +15,10 @@ const COMMANDS: &[&str] = &[
     "check_permissions",
     "list_services",
     "get_adapter_state",
+    "mtu",
+    "set_write_behavior",
+    "set_timeouts",
+    "set_android_mtu",
 ];
 
 fn main() {

@@ -17,6 +17,7 @@ pub mod models;
 pub use error::Error;
 pub use handler::Handler;
 pub use handler::{OnDisconnectHandler, SubscriptionHandler};
+pub use models::{Timeouts, TimeoutsMs};
 
 pub static ALLOW_IBEACONS: AtomicBool = AtomicBool::new(false);
 
@@ -33,6 +34,21 @@ pub fn try_init() -> Result<TauriPlugin<Wry>, Error> {
             #[cfg(target_os = "android")]
             android::init(app, api)?;
             Ok(())
+        })
+        .on_event(|_app, event| {
+            // Leaving a GATT link open past the end of the process keeps the
+            // peripheral "connected" until it times out on its own, during
+            // which it stops advertising and looks like it disappeared.
+            if matches!(
+                event,
+                tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+            ) {
+                if let Ok(handler) = get_handler() {
+                    if handler.is_connected() {
+                        let _ = async_runtime::block_on(handler.disconnect());
+                    }
+                }
+            }
         })
         .build();
     Ok(plugin)

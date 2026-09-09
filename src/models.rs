@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use btleplug::api::BDAddr;
 use enumflags2::BitFlags;
@@ -215,4 +216,64 @@ pub enum AdapterState {
     Unknown,
     Off,
     On,
+}
+
+/// Timeouts for the GATT operations, see [`crate::Handler::set_timeouts`].
+///
+/// These are the timeouts of the operation as a whole (including any retries
+/// the platform implementation does internally), not of a single attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timeouts {
+    pub connect: Duration,
+    pub discover_services: Duration,
+    pub read: Duration,
+    pub write: Duration,
+    pub subscribe: Duration,
+    pub disconnect: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            // Connecting on Android retries internally (4 x 350 ms) and a
+            // peripheral that only advertises slowly can take a while to
+            // answer, so this is deliberately generous.
+            connect: Duration::from_secs(20),
+            discover_services: Duration::from_secs(15),
+            read: Duration::from_secs(10),
+            write: Duration::from_secs(10),
+            subscribe: Duration::from_secs(10),
+            disconnect: Duration::from_secs(10),
+        }
+    }
+}
+
+/// Partial update of [`Timeouts`] in milliseconds, as accepted by the
+/// `set_timeouts` command. Fields left out keep their current value.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeoutsMs {
+    pub connect: Option<u64>,
+    pub discover_services: Option<u64>,
+    pub read: Option<u64>,
+    pub write: Option<u64>,
+    pub subscribe: Option<u64>,
+    pub disconnect: Option<u64>,
+}
+
+impl Timeouts {
+    /// Applies the milliseconds given in `update`, keeping every field that is
+    /// `None`.
+    #[must_use]
+    pub fn apply(self, update: TimeoutsMs) -> Self {
+        let or_keep = |value: Option<u64>, current| value.map_or(current, Duration::from_millis);
+        Self {
+            connect: or_keep(update.connect, self.connect),
+            discover_services: or_keep(update.discover_services, self.discover_services),
+            read: or_keep(update.read, self.read),
+            write: or_keep(update.write, self.write),
+            subscribe: or_keep(update.subscribe, self.subscribe),
+            disconnect: or_keep(update.disconnect, self.disconnect),
+        }
+    }
 }

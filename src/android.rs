@@ -29,6 +29,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::models::BondingPeripheral;
+use crate::Handler;
 
 type Result<T> = std::result::Result<T, btleplug::Error>;
 
@@ -421,11 +422,13 @@ impl btleplug::api::Peripheral for Peripheral {
     }
 
     async fn connect(&self) -> Result<()> {
+        let timeouts = timeouts();
         call_plugin_with_timeout::<_, ()>(
             "connect",
             ConnectParams {
                 address: self.address,
             },
+            timeouts.connect,
         )
         .await?;
         info!("connected to: {:?}", self.address);
@@ -438,6 +441,7 @@ impl btleplug::api::Peripheral for Peripheral {
                     address: self.address,
                     mtu: requested_mtu,
                 },
+                timeouts.connect,
             )
             .await?;
             info!("mtu set to: {:?}", mtu.mtu);
@@ -452,6 +456,7 @@ impl btleplug::api::Peripheral for Peripheral {
             ConnectParams {
                 address: self.address,
             },
+            timeouts().disconnect,
         )
         .await?;
         Ok(())
@@ -463,6 +468,7 @@ impl btleplug::api::Peripheral for Peripheral {
             ConnectParams {
                 address: self.address,
             },
+            timeouts().discover_services,
         )
         .await?;
         debug!("discover services plugin call returned");
@@ -478,6 +484,15 @@ impl btleplug::api::Peripheral for Peripheral {
         let (timeout, skip_waiting_for_completion) = crate::get_handler()
             .map(|handler| handler.get_write_behaviour())
             .unwrap_or((0, false));
+        let write_timeout = timeouts().write;
+        // 0 means "no timeout" on the Kotlin side, which would leave a queued
+        // write pending forever. Fall back to the handler timeout so the queue
+        // expiry always exists and fires before the Rust side gives up.
+        let timeout = if timeout == 0 {
+            u32::try_from(write_timeout.as_millis()).unwrap_or(u32::MAX)
+        } else {
+            timeout
+        };
         call_plugin_with_timeout::<_, ()>(
             "write",
             serde_json::json!({
@@ -489,6 +504,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 "timeout": timeout,
                 "skipWaitingForWriteToComplete": skip_waiting_for_completion
             }),
+            write_timeout,
         )
         .await?;
         Ok(())
@@ -507,6 +523,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 characteristic: characteristic.uuid,
                 service: characteristic.service_uuid,
             },
+            timeouts().read,
         )
         .await?;
         debug!("read: {:?}", res.value);
@@ -521,6 +538,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 characteristic: characteristic.uuid,
                 service: characteristic.service_uuid,
             },
+            timeouts().subscribe,
         )
         .await?;
         Ok(())
@@ -534,6 +552,7 @@ impl btleplug::api::Peripheral for Peripheral {
                 characteristic: characteristic.uuid,
                 service: characteristic.service_uuid,
             },
+            timeouts().subscribe,
         )
         .await?;
         Ok(())
@@ -593,19 +612,31 @@ impl btleplug::api::Peripheral for Peripheral {
     }
 }
 
+/// Added on top of the operation timeout for the IPC call, so the operation
+/// timeout in the handler is the one that fires and the IPC timeout stays a
+/// safety net for a Kotlin side that never answers at all.
+const IPC_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
+
+/// The timeouts configured on the handler, or the defaults while it is not
+/// initialized yet.
+fn timeouts() -> crate::models::Timeouts {
+    crate::get_handler().map_or_else(|_| crate::models::Timeouts::default(), Handler::timeouts)
+}
+
 async fn call_plugin_with_timeout<
     P: serde::Serialize + Send + 'static,
     R: serde::de::DeserializeOwned + Send + 'static,
 >(
     func: &'static str,
     params: P,
+    timeout: Duration,
 ) -> Result<R> {
     let handle = tokio::task::spawn_blocking(move || {
         get_handle()
             .run_mobile_plugin(func, params)
             .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))
     });
-    tokio::time::timeout(Duration::from_secs(5), handle)
+    tokio::time::timeout(timeout + IPC_TIMEOUT_MARGIN, handle)
         .await
         .map_err(|_| btleplug::Error::RuntimeError(format!("timeout during {func}")))?
         .map_err(|e| btleplug::Error::RuntimeError(format!("tokio join error: {e}")))?

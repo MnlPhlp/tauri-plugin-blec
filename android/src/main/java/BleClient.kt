@@ -180,7 +180,11 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                     result.scanRecord?.serviceUuids,
                     txPower
                 )
-                this@BleClient.plugin.devices[device.address] = Peripheral(this@BleClient.activity, result.device, this@BleClient.plugin)
+                // Keep the Peripheral of a connected device: a fresh one would
+                // not know about the open BluetoothGatt and leak it.
+                val connected = this@BleClient.plugin.connected_devices[device.address]
+                this@BleClient.plugin.devices[device.address] = connected
+                    ?: Peripheral(this@BleClient.activity, result.device, this@BleClient.plugin)
                 val res = JSObject()
                 res.put("result", device.toJsObject())
                 args.onDevice!!.send(res)

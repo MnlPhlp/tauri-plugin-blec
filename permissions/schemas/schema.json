@@ -367,6 +367,18 @@
           "markdownDescription": "Denies the list_services command without any pre-configured scope."
         },
         {
+          "description": "Enables the mtu command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mtu",
+          "markdownDescription": "Enables the mtu command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mtu command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mtu",
+          "markdownDescription": "Denies the mtu command without any pre-configured scope."
+        },
+        {
           "description": "Enables the recv command without any pre-configured scope.",
           "type": "string",
           "const": "allow-recv",
@@ -439,6 +451,42 @@
           "markdownDescription": "Denies the send_string command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_android_mtu command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-android-mtu",
+          "markdownDescription": "Enables the set_android_mtu command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_android_mtu command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-android-mtu",
+          "markdownDescription": "Denies the set_android_mtu command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_timeouts command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-timeouts",
+          "markdownDescription": "Enables the set_timeouts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_timeouts command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-timeouts",
+          "markdownDescription": "Denies the set_timeouts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_write_behavior command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-write-behavior",
+          "markdownDescription": "Enables the set_write_behavior command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_write_behavior command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-write-behavior",
+          "markdownDescription": "Denies the set_write_behavior command without any pre-configured scope."
+        },
+        {
           "description": "Enables the stop_scan command without any pre-configured scope.",
           "type": "string",
           "const": "allow-stop-scan",
@@ -487,10 +535,10 @@
           "markdownDescription": "Denies the unsubscribe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`"
         }
       ]
     }

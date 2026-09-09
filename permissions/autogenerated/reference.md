@@ -20,6 +20,10 @@ Default permissions for the plugin
 - `allow-list-services`
 - `allow-check-permissions`
 - `allow-get-adapter-state`
+- `allow-mtu`
+- `allow-set-write-behavior`
+- `allow-set-timeouts`
+- `allow-set-android-mtu`
 
 ## Permission Table
 
@@ -189,6 +193,32 @@ Denies the list_services command without any pre-configured scope.
 <tr>
 <td>
 
+`blec:allow-mtu`
+
+</td>
+<td>
+
+Enables the mtu command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-mtu`
+
+</td>
+<td>
+
+Denies the mtu command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `blec:allow-recv`
 
 </td>
@@ -338,6 +368,84 @@ Enables the send_string command without any pre-configured scope.
 <td>
 
 Denies the send_string command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-set-android-mtu`
+
+</td>
+<td>
+
+Enables the set_android_mtu command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-set-android-mtu`
+
+</td>
+<td>
+
+Denies the set_android_mtu command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-set-timeouts`
+
+</td>
+<td>
+
+Enables the set_timeouts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-set-timeouts`
+
+</td>
+<td>
+
+Denies the set_timeouts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-set-write-behavior`
+
+</td>
+<td>
+
+Enables the set_write_behavior command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-set-write-behavior`
+
+</td>
+<td>
+
+Denies the set_write_behavior command without any pre-configured scope.
 
 </td>
 </tr>

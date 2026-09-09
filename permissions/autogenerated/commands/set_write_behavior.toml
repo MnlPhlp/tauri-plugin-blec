@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-write-behavior"
+description = "Enables the set_write_behavior command without any pre-configured scope."
+commands.allow = ["set_write_behavior"]
+
+[[permission]]
+identifier = "deny-set-write-behavior"
+description = "Denies the set_write_behavior command without any pre-configured scope."
+commands.deny = ["set_write_behavior"]

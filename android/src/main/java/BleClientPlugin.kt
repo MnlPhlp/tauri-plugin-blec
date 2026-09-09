@@ -58,7 +58,7 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     private var pendingAskIfDenied = false
     
     @Command
-    fun clear_devices(invoke: Invoke){
+    fun clear_peripherals(invoke: Invoke){
         this.devices.clear()
         invoke.resolve()
     }
@@ -86,12 +86,20 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
     @Command
     fun connect(invoke: Invoke){
         val args = invoke.parseArgs(ConnectParams::class.java)
-        val device = this.devices[args.address]
+        // A Peripheral that still holds a BluetoothGatt must be reused: replacing
+        // it with the scan-fresh object from `devices` would leak that gatt and
+        // leave the device connected with nobody able to disconnect it.
+        val existing = this.connected_devices[args.address]
+        val device = if (existing != null && existing.hasGatt()) {
+            existing
+        } else {
+            this.devices[args.address] ?: existing
+        }
         if (device == null){
             invoke.reject("connect: device '${args.address}' not found in discovered devices (known: ${this.devices.keys})")
             return
         }
-        this.connected_devices[args.address] = device;
+        this.connected_devices[args.address] = device
         device.connect(invoke)
     }
 
@@ -103,8 +111,12 @@ class BleClientPlugin(private val activity: Activity): Plugin(activity) {
             invoke.reject("disconnect: device '${args.address}' not in connected devices (connected: ${this.connected_devices.keys})")
             return
         }
-        this.connected_devices.remove(args.address)
-        device.disconnect(invoke)
+        // Only forget the device once it is really disconnected — removing it
+        // first makes a slow disconnect unreachable for any later
+        // disconnect/is_connected call, which is how links end up half-open.
+        device.disconnect(invoke) {
+            this.connected_devices.remove(args.address)
+        }
     }
 
     @Command

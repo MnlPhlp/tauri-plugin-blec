@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::models::{AdapterState, BleDevice, ScanFilter, Service, WriteType};
+use crate::models::{AdapterState, BleDevice, ScanFilter, Service, TimeoutsMs, WriteType};
 use crate::{get_handler, OnDisconnectHandler};
 
 #[command]
@@ -275,6 +275,13 @@ pub(crate) fn set_write_behavior<R: Runtime>(
     Ok(())
 }
 
+#[command]
+pub(crate) fn set_timeouts<R: Runtime>(_app: AppHandle<R>, timeouts: TimeoutsMs) -> Result<()> {
+    let handler = get_handler()?;
+    handler.set_timeouts(handler.timeouts().apply(timeouts));
+    Ok(())
+}
+
 #[cfg(target_os = "android")]
 #[command]
 pub(crate) fn set_android_mtu<R: Runtime>(_app: AppHandle<R>, mtu: u16) -> Result<()> {
@@ -308,6 +315,7 @@ pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
         get_adapter_state,
         mtu,
         set_write_behavior,
+        set_timeouts,
         set_android_mtu
     ]
 }

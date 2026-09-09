@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-android-mtu"
+description = "Enables the set_android_mtu command without any pre-configured scope."
+commands.allow = ["set_android_mtu"]
+
+[[permission]]
+identifier = "deny-set-android-mtu"
+description = "Denies the set_android_mtu command without any pre-configured scope."
+commands.deny = ["set_android_mtu"]

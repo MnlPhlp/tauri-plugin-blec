@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::models::{self, fmt_addr, AdapterState, BleDevice, ScanFilter, Service};
+use crate::models::{self, fmt_addr, AdapterState, BleDevice, ScanFilter, Service, Timeouts};
 use crate::ALLOW_IBEACONS;
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _};
 use btleplug::api::{CentralEvent, CentralState};
@@ -63,12 +63,32 @@ pub struct Handler {
     connected_dev: Mutex<Option<Peripheral>>,
     /// Lock to serialize BLE GATT operations (only one read/write can be in flight at a time)
     gatt_op_lock: Mutex<()>,
+    timeouts: std::sync::Mutex<Timeouts>,
 
     write_timeout_in_ms: AtomicU32,
     skip_waiting_for_write_to_complete: AtomicBool,
 }
 
 impl Handler {
+    /// Replaces the timeouts used for the GATT operations.
+    /// See [`Timeouts`] for the defaults.
+    pub fn set_timeouts(&self, timeouts: Timeouts) {
+        info!("setting timeouts to {timeouts:?}");
+        *self
+            .timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = timeouts;
+    }
+
+    /// The timeouts currently used for the GATT operations.
+    #[must_use]
+    pub fn timeouts(&self) -> Timeouts {
+        *self
+            .timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn set_write_behaviour(&self, timeout_in_ms: Option<u32>, skip_waiting_on_success: bool) {
         self.write_timeout_in_ms.store(
             timeout_in_ms.unwrap_or(0),
@@ -180,6 +200,7 @@ impl Handler {
             connected_tx,
             connected_dev: Mutex::new(None),
             gatt_op_lock: Mutex::new(()),
+            timeouts: std::sync::Mutex::new(Timeouts::default()),
             state: Mutex::new(HandlerState {
                 on_disconnect: OnDisconnectHandler::None,
                 connection_update_channel: vec![],
