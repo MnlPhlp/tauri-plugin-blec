@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">blec-stress-client</string>
+    <string name="main_activity_title">blec-stress-client</string>
+</resources>

@@ -137,14 +137,17 @@ device.drop_link(); // simulate a lost connection
 
 For the real stack there are two example programs:
 
-- [examples/stress-server](examples/stress-server): a scriptable GATT peripheral (Linux/BlueZ, runs
-  on the host PC) that drops links, stops advertising, floods notifications, answers slowly or
-  fails requests, either from a REPL or randomly in `--chaos` mode.
-- [examples/stress-client](examples/stress-client): a Tauri app for the phone or a second PC
-  that runs connect/disconnect/data loops against that server and shows counters and a log
-  whose timestamps can be correlated with the server's log.
+- [examples/stress-server](examples/stress-server): a GATT peripheral (Linux/BlueZ, runs on the
+  host PC) that can drop the link, stop advertising, flood notifications, answer slowly, fail
+  requests or restart, on request from the client or from its REPL.
+- [examples/stress-client](examples/stress-client): a Tauri app for the phone or a second PC.
+  Its `integration` scenario runs predefined scripts: one write starts a script, both sides
+  follow the same timeline (drop, disappear, storm, slow responses, restart, rapid reconnects),
+  verify their side and the client merges the server's report into a PASS/FAIL table.
+  A `hold` scenario keeps a connection open for soak testing.
 
-Both speak the GATT protocol described in [examples/stress-protocol.md](examples/stress-protocol.md).
+The scripts and the GATT protocol are defined in
+[examples/stress-protocol.md](examples/stress-protocol.md).
 
 ## Usage in Backend
 
