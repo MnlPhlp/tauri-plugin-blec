@@ -337,6 +337,9 @@ impl Handler {
         }
         // cancel any running discovery
         let _ = self.stop_scan().await;
+        // Never leave a previous link open: connecting to a second device while
+        // the first one is still attached leaks an OS level GATT connection.
+        self.disconnect_other(address).await;
         // connect to the given address
         // try up to 3 times before returning an error
         let mut connected = Ok(());
@@ -354,14 +357,32 @@ impl Handler {
             }
         }
         if let Err(e) = connected {
-            *self.connected_dev.lock().await = None;
-            let _ = self.connected_tx.send(false);
             error!("Failed to connect device: {e}");
+            // A `connectGatt` may still be pending; cancel it so the device is
+            // not left half-connected.
+            let device = self.connected_dev.lock().await.clone();
+            if let Some(device) = device {
+                if let Err(e) = device.disconnect().await {
+                    warn!("Failed to cancel the pending connection: {e}");
+                }
+            }
+            self.clear_connection_state().await;
             return Err(e);
         }
         debug!("connecting services");
         // discover service/characteristics (no state lock held during GATT op)
-        let characs = self.connect_services().await?;
+        let characs = match self.connect_services().await {
+            Ok(characs) => characs,
+            Err(e) => {
+                // The link is up but unusable — tear it down instead of
+                // returning with a connected device the caller doesn't know about.
+                error!("Failed to discover services: {e}");
+                if let Err(e) = self.disconnect().await {
+                    warn!("Failed to disconnect after failed service discovery: {e}");
+                }
+                return Err(e);
+            }
+        };
         {
             debug!("locking state");
             let mut state = self.state.lock().await;
@@ -388,7 +409,12 @@ impl Handler {
         debug!("starting service discovery");
         {
             let _gatt_guard = self.gatt_op_lock.lock().await;
-            run_with_timeout(device.discover_services(), "discover services").await?;
+            run_with_timeout(
+                device.discover_services(),
+                "discover services",
+                self.timeouts().discover_services,
+            )
+            .await?;
         }
         debug!("service discovery done");
         let mut characs = vec![];
@@ -404,10 +430,15 @@ impl Handler {
         trace!("connect_device: initiating connection to {address}");
         debug!("connecting to {address}",);
         let mut connected_rx = self.connected_rx.clone();
-        let devices = self.devices.lock().await;
-        let device = devices
-            .get(address)
-            .ok_or(Error::UnknownPeripheral(address.to_string()))?;
+        // clone the peripheral and release the lock: `handle_connect` needs it
+        // while we are waiting for the connection event
+        let device = {
+            let devices = self.devices.lock().await;
+            devices
+                .get(address)
+                .ok_or(Error::UnknownPeripheral(address.to_string()))?
+                .clone()
+        };
         {
             *self.connected_dev.lock().await = Some(device.clone());
             if device.is_connected().await? {
@@ -419,17 +450,30 @@ impl Handler {
             }
         }
         debug!("Connecting to device");
+        let timeout = self.timeouts().connect;
         {
             let _gatt_guard = self.gatt_op_lock.lock().await;
-            run_with_timeout(device.connect(), "Connect").await?;
+            run_with_timeout(device.connect(), "Connect", timeout).await?;
         }
         // wait for the actual connection to be established
         if !*connected_rx.borrow_and_update() {
             info!("waiting for connection event");
-            connected_rx
-                .changed()
-                .await
-                .expect("failed to wait for connection event");
+            match tokio::time::timeout(timeout, connected_rx.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    error!("connection event channel closed: {e}");
+                    return Err(Error::ConnectionFailed);
+                }
+                Err(_) => {
+                    warn!("timed out waiting for the connection event");
+                    // the connection may still be established later; make sure
+                    // it isn't left dangling
+                    if let Err(e) = device.disconnect().await {
+                        warn!("Failed to cancel the pending connection: {e}");
+                    }
+                    return Err(Error::Timeout("connect event".to_string()));
+                }
+            }
         }
         if !*self.connected_rx.borrow() {
             // still not connected
@@ -441,45 +485,88 @@ impl Handler {
         Ok(())
     }
 
+    /// Disconnects a currently connected device unless it is the one at
+    /// `address` and still actually connected. Best effort: errors are logged.
+    async fn disconnect_other(&self, address: &str) {
+        let device = self.connected_dev.lock().await.clone();
+        let Some(device) = device else {
+            return;
+        };
+        if fmt_addr(device.address()) == address && device.is_connected().await.unwrap_or(false) {
+            // `connect_device` reuses this connection
+            return;
+        }
+        info!(
+            "disconnecting {} before connecting to {address}",
+            fmt_addr(device.address())
+        );
+        if let Err(e) = self.disconnect().await {
+            warn!("Failed to disconnect the previously connected device: {e}");
+        }
+    }
+
+    /// Drops every trace of a connection: forgets the device, stops the
+    /// notification task, clears the characteristics and listeners, runs the
+    /// disconnect callback and reports the new state to all listeners.
+    async fn clear_connection_state(&self) {
+        *self.connected_dev.lock().await = None;
+        *self.notify_listeners.lock().await = vec![];
+        {
+            // scope: `send_connection_update` needs the state lock as well
+            let mut state = self.state.lock().await;
+            if let Some(handle) = state.listen_handle.take() {
+                handle.abort();
+            }
+            state.on_disconnect.take().run().await;
+            state.characs.clear();
+        }
+        self.send_connection_update(false).await;
+        let _ = self.connected_tx.send(false);
+    }
+
     /// Disconnects from the connected device
-    /// This triggers a disconnect and then waits for the actual disconnect event from the adapter
+    /// This triggers a disconnect and then waits for the actual disconnect event from the adapter.
+    ///
+    /// The disconnect is always attempted on the peripheral, even when the
+    /// internal state says it is no longer connected: on Android that state can
+    /// be out of sync with a still open GATT link. A state desync is therefore
+    /// repaired instead of reported, and only a missing device is an error.
     /// # Errors
-    /// Returns an error if no device is connected or if the disconnect fails
-    /// # Panics
-    /// panics if there is an error with handling the internal disconnect event
+    /// Returns an error if no device is connected
     pub async fn disconnect(&self) -> Result<(), Error> {
         trace!("disconnect: user-initiated disconnect");
         info!("disconnect triggered by user");
         let mut connected_rx = self.connected_rx.clone();
-        {
-            // Scope is important to not lock device while waiting for disconnect event
-            let dev = self.connected_dev.lock().await;
-            if let Some(dev) = dev.as_ref() {
-                if let Ok(true) = dev.is_connected().await {
-                    assert!(
-                        (*connected_rx.borrow_and_update()),
-                        "connected_rx is false with a device being connected, this is a bug"
-                    );
-                    dev.disconnect().await?;
-                } else {
-                    debug!("device is not connected");
-                    return Err(Error::NoDeviceConnected);
-                }
-            } else {
-                debug!("no device connected");
-                return Err(Error::NoDeviceConnected);
-            }
+        let was_connected = *connected_rx.borrow_and_update();
+        // Clone: the lock must not be held while waiting for the disconnect event
+        let dev = self.connected_dev.lock().await.clone();
+        let Some(dev) = dev else {
+            debug!("no device connected");
+            return Err(Error::NoDeviceConnected);
+        };
+        let is_connected = dev.is_connected().await.unwrap_or(false);
+        if let Err(e) = dev.disconnect().await {
+            warn!("Failed to trigger disconnect: {e}");
+        }
+        if !is_connected || !was_connected {
+            // No disconnect event will arrive because the adapter doesn't
+            // consider the device connected anymore. Repair the state.
+            warn!("device was already disconnected, clearing connection state");
+            self.clear_connection_state().await;
+            return Ok(());
         }
         // the change will be triggered by handle_event -> handle_disconnect which runs in another
         // task
-        connected_rx
-            .changed()
-            .await
-            .expect("failed to wait for disconnect event");
-        if *self.connected_rx.borrow() {
-            // still connected
-            return Err(Error::DisconnectFailed);
+        let timeout = self.timeouts().disconnect;
+        match tokio::time::timeout(timeout, connected_rx.changed()).await {
+            Ok(Ok(())) if !*self.connected_rx.borrow() => return Ok(()),
+            Ok(Ok(())) => warn!("still connected after the disconnect event"),
+            Ok(Err(e)) => warn!("disconnect event channel closed: {e}"),
+            Err(_) => warn!("timed out waiting for the disconnect event"),
         }
+        // The platform side closes the GATT link on its own; make sure our
+        // state agrees so the next connect isn't blocked by a stale device.
+        self.clear_connection_state().await;
         Ok(())
     }
 
@@ -498,21 +585,8 @@ impl Handler {
             warn!("Unexpected disconnect event for device {peripheral_id}, connected device is {connected:?}",);
             return Ok(());
         }
-        {
-            info!("disconnecting");
-            *self.connected_dev.lock().await = None;
-            *self.notify_listeners.lock().await = vec![];
-            let mut state = self.state.lock().await;
-            if let Some(handle) = state.listen_handle.take() {
-                handle.abort();
-            }
-            state.on_disconnect.take().run().await;
-            state.characs.clear();
-        }
-        self.send_connection_update(false).await;
-        self.connected_tx
-            .send(false)
-            .expect("failed to send connected update");
+        info!("disconnecting");
+        self.clear_connection_state().await;
         Ok(())
     }
 
@@ -647,7 +721,12 @@ impl Handler {
         debug!("discovering services on {address}");
         if device.services().is_empty() {
             let _gatt_guard = self.gatt_op_lock.lock().await;
-            run_with_timeout(device.discover_services(), "discover services").await?;
+            run_with_timeout(
+                device.discover_services(),
+                "discover services",
+                self.timeouts().discover_services,
+            )
+            .await?;
         }
         let services = device.services().iter().map(Service::from).collect();
         if !already_connected {
@@ -745,7 +824,12 @@ impl Handler {
             data.len(),
             data
         );
-        dev.write(&charac, data, write_type.into()).await?;
+        run_with_timeout(
+            dev.write(&charac, data, write_type.into()),
+            "write",
+            self.timeouts().write,
+        )
+        .await?;
         Ok(())
     }
 
@@ -781,7 +865,7 @@ impl Handler {
                 state.get_charac(c)?.clone()
             }
         };
-        let data = run_with_timeout(dev.read(&charac), "read").await?;
+        let data = run_with_timeout(dev.read(&charac), "read", self.timeouts().read).await?;
         trace!(
             "received {} bytes from characteristic {c}: {:02x?}",
             data.len(),
@@ -828,7 +912,12 @@ impl Handler {
             }
         };
         info!("subscribing to characteristic {charac:?}");
-        run_with_timeout(dev.subscribe(&charac), "subscribe").await?;
+        run_with_timeout(
+            dev.subscribe(&charac),
+            "subscribe",
+            self.timeouts().subscribe,
+        )
+        .await?;
         info!("subscribed successfully");
         self.notify_listeners.lock().await.push(Listener {
             uuid: charac.uuid,
@@ -856,7 +945,12 @@ impl Handler {
             let state = self.state.lock().await;
             state.get_charac(c)?.clone()
         };
-        run_with_timeout(dev.unsubscribe(&charac), "unsubscribe").await?;
+        run_with_timeout(
+            dev.unsubscribe(&charac),
+            "unsubscribe",
+            self.timeouts().subscribe,
+        )
+        .await?;
         let mut listeners = self.notify_listeners.lock().await;
         listeners.retain(|l| l.uuid != charac.uuid);
         Ok(())
@@ -871,10 +965,23 @@ impl Handler {
             CentralEvent::DeviceConnected(peripheral_id) => {
                 self.handle_connect(peripheral_id).await;
             }
+            CentralEvent::StateUpdate(CentralState::PoweredOff) => {
+                // Every link is gone with the adapter, and no disconnect event
+                // will arrive for it.
+                self.handle_adapter_powered_off().await;
+            }
 
             _event => {}
         }
         Ok(())
+    }
+
+    async fn handle_adapter_powered_off(&self) {
+        if self.connected_dev.lock().await.is_none() {
+            return;
+        }
+        warn!("adapter powered off while connected, clearing connection state");
+        self.clear_connection_state().await;
     }
 
     /// Returns the connected device
@@ -899,31 +1006,34 @@ impl Handler {
                     .expect("failed to send connected update");
                 debug!("connected_tx updated");
                 return;
-            } else {
-                error!("Unexpected connect event for device {peripheral_id}, connected device is {connected_device}");
-                // TODO: disconnect and retry connecting to the requested device??
-
-                if let Err(e) = self.disconnect().await {
-                    error!("Failed to disconnect from device {connected_device}: {e}");
-                }
             }
+            error!("Unexpected connect event for device {peripheral_id}, connected device is {connected_device}");
+        } else {
+            // Nobody is waiting for this connection — typically a `connect()`
+            // that already gave up, whose `connectGatt` completed afterwards.
+            // Adopting it would leave `connected_tx` false with an open link.
+            warn!("Connect event for {peripheral_id} without a pending connection");
         }
+        self.disconnect_peripheral(&peripheral_id).await;
+    }
 
-        let pid = peripheral_id.to_string();
-        if let Some((_, device)) = self
+    /// Disconnects a peripheral directly, bypassing the handler state. Used for
+    /// links we never adopted, where [`Self::disconnect`] would not find a device.
+    async fn disconnect_peripheral(&self, peripheral_id: &PeripheralId) {
+        let peripheral = self
             .devices
             .lock()
             .await
-            .iter()
-            .find(|(id, _device)| **id == pid)
-        {
-            self.connected_dev.lock().await.replace(device.clone());
-        } else {
-            error!("Received connect event for unknown device {peripheral_id}");
-            // TODO: disconnect?
-            if let Err(e) = self.disconnect().await {
-                error!("Failed to disconnect from device {peripheral_id:?}: {e}");
-            }
+            .values()
+            .find(|p| p.id() == *peripheral_id)
+            .cloned();
+        let Some(peripheral) = peripheral else {
+            error!("Cannot disconnect unknown device {peripheral_id}");
+            return;
+        };
+        info!("disconnecting unexpected connection to {peripheral_id}");
+        if let Err(e) = peripheral.disconnect().await {
+            error!("Failed to disconnect from device {peripheral_id}: {e}");
         }
     }
 
@@ -976,8 +1086,9 @@ impl Handler {
 async fn run_with_timeout<T: Send + Sync + 'static>(
     fut: impl Future<Output = Result<T, btleplug::Error>> + Send,
     cmd: &str,
+    timeout: Duration,
 ) -> Result<T, Error> {
-    tokio::time::timeout(Duration::from_secs(5), fut)
+    tokio::time::timeout(timeout, fut)
         .await
         .map_err(|_| Error::Timeout(cmd.to_string()))?
         .map_err(Error::Btleplug)
