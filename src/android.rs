@@ -363,6 +363,7 @@ impl btleplug::api::Peripheral for Peripheral {
             // at the moment not used by the handler or BleDevice struct so we can return default values
             address_type: Default::default(),
             class: Default::default(),
+            appearance: None,
         }))
     }
 
