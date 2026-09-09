@@ -257,8 +257,11 @@ function fmtTime(ts: number): string {
 .app {
   max-width: 760px;
   margin: 0 auto;
-  padding: 12px;
-  padding-bottom: 32px;
+  /* keep clear of the status bar, notch and navigation bar */
+  padding: calc(env(safe-area-inset-top, 0px) + 12px)
+    calc(env(safe-area-inset-right, 0px) + 12px)
+    calc(env(safe-area-inset-bottom, 0px) + 32px)
+    calc(env(safe-area-inset-left, 0px) + 12px);
   display: flex;
   flex-direction: column;
   gap: 12px;

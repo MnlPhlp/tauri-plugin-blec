@@ -24,6 +24,16 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    // Dummy key shared with examples/plugin-blec-example so release APKs are
+    // signed and installable. Not for anything but these examples.
+    signingConfigs {
+        create("release") {
+            keyAlias = "example"
+            keyPassword = "123456"
+            storeFile = rootProject.file("example_key.jks")
+            storePassword = "123456"
+        }
+    }
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -38,6 +48,7 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
