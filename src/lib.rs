@@ -12,6 +12,8 @@ mod android;
 mod commands;
 mod error;
 mod handler;
+#[cfg(any(test, feature = "mock"))]
+pub mod mock;
 pub mod models;
 
 pub use error::Error;

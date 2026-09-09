@@ -100,6 +100,52 @@ const CHARACTERISTIC_UUID = '51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B'
 await sendString(CHARACTERISTIC_UUID, 'Test', 'withResponse')
 ```
 
+## Testing
+
+### Unit tests with the mock backend
+
+The crate contains a mock of the btleplug backend (`tauri_plugin_blec::mock`) that simulates
+an adapter and devices in process: devices can disappear, drop their link, answer slowly, fail
+or hang operations, and send notifications. The handler tests in `src/handler/tests` drive the
+plugin through those situations, including a seeded randomized stress test.
+
+```bash
+cargo test
+# with the handler's logs
+RUST_LOG=trace cargo test -- --nocapture
+# longer randomized run, reproducible via the seed
+BLEC_STRESS_SEED=7 BLEC_STRESS_ITERS=5000 cargo test stress -- --nocapture
+# tests documenting known bugs are ignored; run them to see the current behaviour
+cargo test -- --ignored
+```
+
+The mock can also replace the real backend in an app (desktop targets only) with the `mock`
+cargo feature. The plugin then talks to `MockWorld::global()`, which the app can script:
+
+```rs
+use btleplug::api::CharPropFlags;
+use tauri_plugin_blec::mock::{DeviceSpec, MockWorld, ServiceSpec};
+let device = MockWorld::global().add_device(
+    DeviceSpec::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]).name("fake").service(
+        ServiceSpec::new(SERVICE_UUID).characteristic(CHARACTERISTIC_UUID, CharPropFlags::NOTIFY),
+    ),
+);
+device.drop_link(); // simulate a lost connection
+```
+
+### Stress testing the full stack
+
+For the real stack there are two example programs:
+
+- [examples/stress-server](examples/stress-server): a scriptable GATT peripheral (Linux/BlueZ, runs
+  on the host PC) that drops links, stops advertising, floods notifications, answers slowly or
+  fails requests, either from a REPL or randomly in `--chaos` mode.
+- [examples/stress-client](examples/stress-client): a Tauri app for the phone or a second PC
+  that runs connect/disconnect/data loops against that server and shows counters and a log
+  whose timestamps can be correlated with the server's log.
+
+Both speak the GATT protocol described in [examples/stress-protocol.md](examples/stress-protocol.md).
+
 ## Usage in Backend
 
 The plugin can also be used from the rust backend.

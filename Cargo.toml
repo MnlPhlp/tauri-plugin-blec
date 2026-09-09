@@ -30,6 +30,16 @@ serde_json = "1"
 tokio-stream = "0.1.16"
 base64 = "0.22.1"
 
+[features]
+# Replaces the platform BLE backend with an in-process mock (see `tauri_plugin_blec::mock`).
+# Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
+mock = []
+
+[dev-dependencies]
+tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+rand = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [build-dependencies]
 tauri-plugin = { version = "2.0.1", features = ["build"] }
 tauri-build = "2.0.1"

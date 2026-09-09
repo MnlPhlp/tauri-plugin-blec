@@ -16,10 +16,17 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
-#[cfg(target_os = "android")]
+// The BLE backend: the mock wins whenever it is enabled, otherwise the plugin's
+// own android implementation or btleplug's platform backend.
+#[cfg(all(target_os = "android", not(any(test, feature = "mock"))))]
 use crate::android::{Adapter, Manager, Peripheral};
-#[cfg(not(target_os = "android"))]
+#[cfg(any(test, feature = "mock"))]
+use crate::mock::{Adapter, Manager, Peripheral};
+#[cfg(not(any(target_os = "android", test, feature = "mock")))]
 use btleplug::platform::{Adapter, Manager, Peripheral};
+
+#[cfg(test)]
+mod tests;
 
 struct Listener {
     uuid: Uuid,
@@ -56,6 +63,8 @@ impl HandlerState {
 pub struct Handler {
     devices: Arc<Mutex<HashMap<String, Peripheral>>>,
     adapter: Mutex<Option<Arc<Adapter>>>,
+    /// Task forwarding the adapter's `CentralEvent`s to `handle_event`
+    event_pump: Mutex<Option<tokio::task::JoinHandle<()>>>,
     notify_listeners: Arc<Mutex<Vec<Listener>>>,
     connected_rx: watch::Receiver<bool>,
     connected_tx: watch::Sender<bool>,
@@ -191,10 +200,23 @@ impl<F: Fn(Vec<u8>) + Send + Sync + 'static> From<F> for SubscriptionHandler {
 
 impl Handler {
     pub(crate) async fn new() -> Result<Self, Error> {
+        Ok(Self::with_adapter(None))
+    }
+
+    /// Creates a handler that uses `adapter` instead of the first adapter the
+    /// platform manager reports. Used to inject a [`crate::mock`] adapter.
+    #[cfg(any(test, feature = "mock"))]
+    #[allow(dead_code)] // only the tests inject an adapter so far
+    pub(crate) fn new_with_adapter(adapter: Adapter) -> Self {
+        Self::with_adapter(Some(Arc::new(adapter)))
+    }
+
+    fn with_adapter(adapter: Option<Arc<Adapter>>) -> Self {
         let (connected_tx, connected_rx) = watch::channel(false);
-        Ok(Self {
+        Self {
             devices: Arc::new(Mutex::new(HashMap::new())),
-            adapter: Mutex::new(None),
+            adapter: Mutex::new(adapter),
+            event_pump: Mutex::new(None),
             notify_listeners: Arc::new(Mutex::new(vec![])),
             connected_rx,
             connected_tx,
@@ -211,33 +233,44 @@ impl Handler {
             }),
             write_timeout_in_ms: AtomicU32::new(0),
             skip_waiting_for_write_to_complete: AtomicBool::new(false),
-        })
+        }
     }
 
-    async fn get_or_init_adapter(&self) -> Result<Arc<Adapter>, Error> {
-        let mut adapter_guard = self.adapter.lock().await;
-        if let Some(adapter) = &*adapter_guard {
-            return Ok(adapter.clone());
-        }
-
-        let central = get_central().await?;
-        let arc_adapter = Arc::new(central);
-
-        if let Ok(handler_static) = crate::get_handler() {
-            let stream_res = handler_static
-                .get_event_stream_internal(arc_adapter.clone())
-                .await;
-            tauri::async_runtime::spawn(async move {
-                if let Ok(mut stream) = stream_res {
-                    while let Some(event) = stream.next().await {
-                        let _ = handler_static.handle_event(event).await;
-                    }
+    /// Returns the adapter, creating it on first use, and makes sure the task
+    /// that forwards the adapter's events to [`Self::handle_event`] is running.
+    async fn get_or_init_adapter(&'static self) -> Result<Arc<Adapter>, Error> {
+        let adapter = {
+            let mut adapter_guard = self.adapter.lock().await;
+            match &*adapter_guard {
+                Some(adapter) => adapter.clone(),
+                None => {
+                    let adapter = Arc::new(get_central().await?);
+                    *adapter_guard = Some(adapter.clone());
+                    adapter
                 }
-            });
-        }
+            }
+        };
+        self.start_event_pump(&adapter).await;
+        Ok(adapter)
+    }
 
-        *adapter_guard = Some(arc_adapter.clone());
-        Ok(arc_adapter)
+    async fn start_event_pump(&'static self, adapter: &Arc<Adapter>) {
+        let mut pump = self.event_pump.lock().await;
+        if pump.as_ref().is_some_and(|task| !task.is_finished()) {
+            return;
+        }
+        let stream_res = self.get_event_stream_internal(adapter.clone()).await;
+        *pump = Some(tokio::task::spawn(async move {
+            match stream_res {
+                Ok(mut stream) => {
+                    while let Some(event) = stream.next().await {
+                        let _ = self.handle_event(event).await;
+                    }
+                    warn!("adapter event stream ended");
+                }
+                Err(e) => error!("failed to get adapter event stream: {e}"),
+            }
+        }));
     }
 
     async fn get_event_stream_internal(
@@ -748,7 +781,7 @@ impl Handler {
     /// Stops an ongoing scan. The polling task is aborted first, then the
     /// adapter scan is stopped (best-effort — it may have already been
     /// stopped by the polling task finishing).
-    pub async fn stop_scan(&self) -> Result<(), Error> {
+    pub async fn stop_scan(&'static self) -> Result<(), Error> {
         if let Some(handle) = self.state.lock().await.scan_task.take() {
             handle.abort();
         }
@@ -1060,7 +1093,7 @@ impl Handler {
         }
     }
 
-    pub async fn get_adapter_state(&self) -> AdapterState {
+    pub async fn get_adapter_state(&'static self) -> AdapterState {
         let adapter = match self.get_or_init_adapter().await {
             Ok(a) => a,
             Err(e) => {
