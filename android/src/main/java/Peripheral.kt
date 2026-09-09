@@ -65,6 +65,24 @@ class Peripheral(
     // maxAttempts for writes; only counts actual failure, waiting on the BT-chip (WRITE_REQUEST_BUSY) does not count as an attempt
     private val maxAttempts = 100
     private val writeRetryDelayMs = 50L
+
+    /**
+     * Status codes of a finished read/write that are worth retrying: generic
+     * stack failures that commonly succeed on the next attempt. Everything else
+     * (e.g. an ATT error the peripheral answered with, like "read not
+     * permitted" or "unlikely error") is a real result and is reported to the
+     * caller right away instead of being retried up to [maxAttempts] times.
+     */
+    private fun isTransientStatus(status: Int): Boolean {
+        return when (status) {
+            133, // GATT_ERROR: generic Android stack failure
+            62,  // GATT_CONN_CANCEL
+            129, // GATT_INTERNAL_ERROR
+            BluetoothGatt.GATT_CONNECTION_CONGESTED,
+            BluetoothGatt.GATT_FAILURE -> true
+            else -> false
+        }
+    }
     private val writeCallbackWaitNoResponseMs = 1500L
     private val writeCallbackWaitWithResponseMs = 3000L
 
@@ -283,7 +301,7 @@ class Peripheral(
 
                 Log.v("Peripheral", "Write with id $current.id attempt $current.attempt failed!")
 
-                if (current.attempt < this@Peripheral.maxAttempts && !this@Peripheral.isWriteTimedOut(current)) {
+                if (this@Peripheral.isTransientStatus(status) && current.attempt < this@Peripheral.maxAttempts && !this@Peripheral.isWriteTimedOut(current)) {
                     current.attempt += 1
                     Log.w(
                         "Peripheral",
@@ -323,7 +341,7 @@ class Peripheral(
                 op.invoke.resolve(res)
                 return
             }
-            if (op.attempt < this@Peripheral.maxAttempts) {
+            if (this@Peripheral.isTransientStatus(status) && op.attempt < this@Peripheral.maxAttempts) {
                 val nextAttempt = op.attempt + 1
                 Log.w(
                     "Peripheral",
@@ -363,7 +381,7 @@ class Peripheral(
                 return
             }
             val desc = descriptor
-            if (op.attempt < this@Peripheral.maxAttempts && desc != null) {
+            if (this@Peripheral.isTransientStatus(status) && op.attempt < this@Peripheral.maxAttempts && desc != null) {
                 val nextAttempt = op.attempt + 1
                 Log.w(
                     "Peripheral",

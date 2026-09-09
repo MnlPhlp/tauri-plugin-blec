@@ -38,7 +38,12 @@ struct Cli {
     large_size: usize,
 }
 
-#[tokio::main]
+// current_thread on purpose: bluer spawns one task per incoming D-Bus method
+// call, and only the current-thread scheduler polls spawned tasks in spawn
+// order. On the multi-thread runtime two write-without-response commands that
+// arrive back to back may be processed in swapped order, even with the
+// `echo_lock` (the lock is fair, but the tasks race to reach it).
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // bluer logs through the `log` crate; enable with e.g. RUST_LOG=bluer=debug.
     env_logger::init();
@@ -86,6 +91,8 @@ async fn main() -> Result<()> {
             }
         });
     }
+    // The device watcher can miss `Connected` changes; poll as a fallback.
+    tokio::spawn(control::poll_central_liveness(state.clone()));
 
     log("info", "ready; type `help` for REPL commands");
     repl(state.clone()).await;

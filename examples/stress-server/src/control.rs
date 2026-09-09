@@ -111,6 +111,12 @@ pub struct ServerState {
     events: watch::Sender<u64>,
 
     /// Active ECHO notify session (session id, notifier).
+    /// Held for the whole ECHO write handler: bluer runs every incoming write as
+    /// its own task, and two write-without-response commands that arrive back
+    /// to back would otherwise interleave at the awaits and swap their seq numbers.
+    /// Only sufficient together with the current-thread runtime (see `main.rs`),
+    /// which polls the spawned tasks in spawn order.
+    pub echo_lock: Mutex<()>,
     echo_notifier: Mutex<Option<(u64, CharacteristicNotifier)>>,
     /// Channel into the active COUNTER notify session (session id, sender).
     counter_tx: Mutex<Option<(u64, mpsc::UnboundedSender<StormReq>)>>,
@@ -139,6 +145,7 @@ impl ServerState {
             large_reads_ok: AtomicU64::new(0),
             fails_consumed: AtomicU64::new(0),
             events: watch::channel(0).0,
+            echo_lock: Mutex::new(()),
             echo_notifier: Mutex::new(None),
             counter_tx: Mutex::new(None),
             session_ids: AtomicU64::new(1),
@@ -293,6 +300,23 @@ impl ServerState {
     /// even if the D-Bus device events are late.
     pub async fn note_request_from(&self, addr: Address) {
         self.on_connected(addr).await;
+    }
+
+    /// Re-checks the tracked central against `BlueZ` and forgets it when the link
+    /// is gone. The `Connected` property change does not always reach the device
+    /// watcher, so this runs when a notify session ends (`BlueZ` ends them on
+    /// disconnect) and periodically from [`poll_central_liveness`].
+    pub async fn verify_central_connected(&self) {
+        let Some(addr) = self.central().await else {
+            return;
+        };
+        let connected = match self.adapter.device(addr) {
+            Ok(device) => device.is_connected().await.unwrap_or(false),
+            Err(_) => false,
+        };
+        if !connected {
+            self.on_disconnected(addr).await;
+        }
     }
 
     // ------------------------------------------------------------------------------------
@@ -596,6 +620,16 @@ pub async fn watch_devices(state: Arc<ServerState>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Fallback for missed `Connected` events: checks the tracked central's link
+/// state every 250 ms.
+pub async fn poll_central_liveness(state: Arc<ServerState>) {
+    let mut ticker = tokio::time::interval(Duration::from_millis(250));
+    loop {
+        ticker.tick().await;
+        state.verify_central_connected().await;
+    }
 }
 
 fn spawn_device_watch(state: Arc<ServerState>, addr: Address) {

@@ -80,6 +80,9 @@ fn echo(state: Arc<ServerState>) -> Characteristic {
             method: CharacteristicWriteMethod::Fun(Box::new(move |payload, req| {
                 let state = write_state.clone();
                 async move {
+                    // keep arrival order: seq assignment and notification of one
+                    // write must finish before the next write is processed
+                    let _serial = state.echo_lock.lock().await;
                     let addr = req.device_address;
                     state.note_request_from(addr).await;
                     if state.take_fail() {
@@ -118,6 +121,8 @@ fn echo(state: Arc<ServerState>) -> Characteristic {
                         stopped.await;
                         state.clear_echo_notifier(id).await;
                         log("info", format!("ECHO notify session {id} stop"));
+                        // BlueZ ends notify sessions when the link drops
+                        state.verify_central_connected().await;
                     });
                 }
                 .boxed()
@@ -198,6 +203,8 @@ fn counter(state: Arc<ServerState>) -> Characteristic {
 
                         state.clear_counter_tx(id).await;
                         log("counter_stop", format!("session={id} seq={seq}"));
+                        // BlueZ ends notify sessions when the link drops
+                        state.verify_central_connected().await;
                     });
                 }
                 .boxed()

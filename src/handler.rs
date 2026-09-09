@@ -367,7 +367,7 @@ impl Handler {
         if !self.devices.lock().await.contains_key(address) {
             // run a short scan to try and find the device
             let (tx, mut rx) = mpsc::channel(8);
-            self.discover(Some(tx), 1000, ScanFilter::None, allow_ibeacons)
+            self.discover(Some(tx), 5000, ScanFilter::None, allow_ibeacons)
                 .await?;
             while let Some(devices) = rx.recv().await {
                 for dev in devices {
