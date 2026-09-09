@@ -106,9 +106,22 @@ impl btleplug::api::Central for Adapter {
         let (tx, rx) = tokio::sync::mpsc::channel::<CentralEvent>(1);
         let stream = ReceiverStream::new(rx);
         let channel: Channel = Channel::new(move |response| {
-            let event = response
-                .deserialize::<CentralEvent>()
+            let value = response
+                .deserialize::<serde_json::Value>()
                 .expect("failed to deserialize event");
+            // Diagnostic from the Kotlin side, not a btleplug event: our
+            // BluetoothGatt is gone but the phone keeps the radio link for
+            // another GATT client, so the peripheral never sees a disconnect
+            // and the next connect silently reuses that link.
+            if let Some(address) = value.get("LinkStillConnected") {
+                tracing::warn!(
+                    "disconnected from {address}, but the phone still holds a GATT link to it \
+                     (another app or a leaked BluetoothGatt): the device will not notice the disconnect"
+                );
+                return Ok(());
+            }
+            let event: CentralEvent =
+                serde_json::from_value(value).expect("failed to deserialize event");
             debug!("sending event: {event:?}");
             tx.blocking_send(event)
                 .expect("failed to send notification");

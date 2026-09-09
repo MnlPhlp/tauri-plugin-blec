@@ -6,6 +6,8 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
 import android.os.Build
 import android.os.Handler
@@ -83,6 +85,10 @@ class Peripheral(
             else -> false
         }
     }
+    // Android keeps the ACL open for 1 s after the last GATT client closed
+    // (l2cap link idle timeout) before it terminates the link; a connect within
+    // that second reuses the link without the peripheral noticing anything.
+    private val linkIdleTimeoutMs = 1500L
     private val writeCallbackWaitNoResponseMs = 1500L
     private val writeCallbackWaitWithResponseMs = 3000L
 
@@ -134,6 +140,47 @@ class Peripheral(
         }
         println("sending event $data")
         channel.send(data)
+        if (event == Event.DeviceDisconnected) {
+            reportLinkStillHeld(channel)
+        }
+    }
+
+    /**
+     * Our BluetoothGatt is disconnected, but the phone may still hold the radio
+     * link to the device for another GATT client (another app, or a leaked
+     * BluetoothGatt). The peripheral then never sees a disconnect and a later
+     * connect silently reuses the old link. Make that visible.
+     *
+     * The stack keeps the ACL for [linkIdleTimeoutMs] after the last client
+     * closes before it terminates the link, so the check runs after that grace
+     * period. It is skipped when we connected again ourselves in the meantime
+     * (then the reuse of the link is intended).
+     */
+    @SuppressLint("MissingPermission")
+    private fun reportLinkStillHeld(channel: Channel) {
+        retryHandler.postDelayed({
+            if (this.gatt != null || this.pendingGatt != null) {
+                return@postDelayed
+            }
+            val stillConnected = try {
+                val manager = activity.getSystemService(BluetoothManager::class.java)
+                manager?.getConnectionState(this.device, BluetoothProfile.GATT) == BluetoothProfile.STATE_CONNECTED
+            } catch (e: Exception) {
+                Log.w("Peripheral", "Could not query the connection state after disconnect: ${e.message}")
+                false
+            }
+            if (!stillConnected) {
+                return@postDelayed
+            }
+            Log.w(
+                "Peripheral",
+                "Disconnected from ${this.device.address} ${linkIdleTimeoutMs}ms ago, but the phone still has a GATT link to it: " +
+                    "another BluetoothGatt client holds the connection, the device will not see a disconnect"
+            )
+            val data = JSObject()
+            data.put("LinkStillConnected", this.device.address)
+            channel.send(data)
+        }, linkIdleTimeoutMs)
     }
 
     private val callback = object : BluetoothGattCallback() {

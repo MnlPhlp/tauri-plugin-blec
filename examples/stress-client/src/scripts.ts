@@ -388,6 +388,11 @@ const rapidReconnect: ScriptDef = {
     let stateOk = true;
     const stateProblems: string[] = [];
     const cycleProblems: string[] = [];
+    // The server counts central connections. If a cycle does not raise that
+    // count, our disconnect never reached the radio (typically another GATT
+    // client on this phone holds the link) and every later cycle is moot.
+    let serverConnects = (await r.ctx.readStatus().catch(() => null))?.connects ?? null;
+    let linkNeverDropped = false;
     for (let c = 0; c < total; c++) {
       r.ctx.check();
       if (r.elapsed > 60000) {
@@ -403,6 +408,10 @@ const rapidReconnect: ScriptDef = {
           stateOk = false;
           stateProblems.push(`cycle ${c + 1}: state not false after disconnect`);
         }
+        // Android keeps the ACL open for 1 s after the last GATT client closed;
+        // a connect within that second silently reuses the link and the
+        // peripheral never sees a disconnect. Give the link time to drop.
+        await r.ctx.sleep(1500);
         await r.ctx.connectTarget();
         if (!(await r.ctx.waitForState(true, 1000))) {
           stateOk = false;
@@ -411,7 +420,15 @@ const rapidReconnect: ScriptDef = {
         await r.ctx.subscribeEcho();
         const echo = await r.ctx.echoOnce(r.def.id, c);
         const callbacks = r.ctx.counters.disconnectCallbacks - cbBefore;
-        ok = gotCb && callbacks === 1 && echo.ok;
+        let linkDropped = true;
+        if (serverConnects !== null) {
+          const status = await r.ctx.readStatus().catch(() => null);
+          if (status) {
+            linkDropped = status.connects > serverConnects;
+            serverConnects = status.connects;
+          }
+        }
+        ok = gotCb && callbacks === 1 && echo.ok && linkDropped;
         if (!ok) {
           cycleProblems.push(
             `cycle ${c + 1}: ` +
@@ -419,10 +436,20 @@ const rapidReconnect: ScriptDef = {
                 !gotCb ? "no disconnect callback within 3 s" : "",
                 callbacks !== 1 ? `${callbacks} disconnect callbacks` : "",
                 !echo.ok ? `echo: ${echo.detail}` : "",
+                !linkDropped ? "server connect count unchanged" : "",
               ]
                 .filter(Boolean)
                 .join(", ")
           );
+        }
+        if (!linkDropped) {
+          linkNeverDropped = true;
+          log.error(
+            `rapid-reconnect cycle ${c + 1}: the server did not see a new connection, so our disconnect ` +
+              "never reached the radio. Another GATT client on this phone (other app or leaked " +
+              "BluetoothGatt) probably holds the link. Skipping the remaining cycles."
+          );
+          break;
         }
       } catch (e) {
         if (e instanceof StopError) throw e;
@@ -440,7 +467,11 @@ const rapidReconnect: ScriptDef = {
     r.set(
       "cycles",
       cyclesOk === total && inTime,
-      `${cyclesOk}/${total} cycles ok in ${r.fmt(r.elapsed)}` +
+      (linkNeverDropped
+        ? "link never dropped: the server saw no new connection after our disconnect/connect, " +
+          "another GATT client on this phone probably holds the link; "
+        : "") +
+        `${cyclesOk}/${total} cycles ok in ${r.fmt(r.elapsed)}` +
         (inTime ? "" : " (over 60 s)") +
         (cycleProblems.length ? `; ${cycleProblems.slice(0, 3).join("; ")}` : "")
     );

@@ -20,6 +20,32 @@ truth for UUIDs, byte layouts, JSON shapes and script timelines.
   `bluetooth` group, or run as root).
 - The crate has its own empty `[workspace]` table, so it builds standalone and is not
   part of the plugin's workspace.
+- **Disable BlueZ's GATT client role.** By default `bluetoothd` runs service discovery
+  on every central that connects, i.e. it opens an ATT client channel to the phone. On
+  Android the phone's own GATT server then counts as a holder of the radio link, so a
+  client-initiated disconnect only closes the app's channel and the ACL stays up until
+  the peripheral disconnects. Symptoms: the phone reports the disconnect callback within
+  a few milliseconds, the next connect takes well under a second, the server never logs
+  `central_disconnected`, and script 7 `rapid-reconnect` fails with "link never dropped".
+  Fix in `/etc/bluetooth/main.conf`:
+
+  ```ini
+  [GATT]
+  Client = false
+  ```
+
+  then `sudo systemctl restart bluetooth`. This only affects this host's ability to act as
+  a GATT client (e.g. reading battery levels of BLE accessories), not the server role.
+  The server checks this at startup and refuses to run otherwise (`--ignore-bluez-config`
+  overrides, `--check-config` only runs the check and exits with 0 or 1).
+- **No other GATT server app on the phone.** Any app that registers a `BluetoothGattServer`
+  (digital car keys, accessory apps) can count as a holder of every LE link on the phone
+  with the same effect as above. `adb shell dumpsys bluetooth_manager | grep "ACL holders"`
+  lists the holders per link; force-stop the offending app while testing.
+- **Android keeps the ACL for 1 s** after the last GATT client closed before it terminates
+  the link. A connect within that second reuses the link, so the server sees neither a
+  disconnect nor a new connection. Script 7 waits 1.5 s between disconnect and connect for
+  this reason.
 
 ## Running
 

@@ -164,7 +164,7 @@ every client step passed. The run-all order is 1, 4, 5, 2, 3, 6, 7.
 
 | Side   | Step              | Condition |
 |--------|-------------------|-----------|
-| client | `cycles`          | 10 cycles of: disconnect (exactly one callback within 3 s), connect, subscribe ECHO, 1 echo write verified; all 10 cycles succeed within 60 s |
+| client | `cycles`          | 10 cycles of: disconnect (exactly one callback within 3 s), wait 1.5 s, connect, subscribe ECHO, 1 echo write verified; all 10 cycles succeed within 60 s. The wait is required: Android keeps the ACL open for 1 s after the last GATT client closed and a connect within that second reuses the link, so the peripheral would never see the disconnect |
 | client | `state_tracking`  | connection state reported false after every disconnect and true after every connect |
 | server | `connects_seen`   | at least 10 central connections observed within 60 s |
 | server | `echo_seen`       | at least 10 ECHO writes received within 60 s |

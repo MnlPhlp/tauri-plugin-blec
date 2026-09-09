@@ -1,6 +1,7 @@
 //! blec stress server: a scriptable "chaos" BLE GATT peripheral for stress-testing
 //! the tauri-plugin-blec client. See README.md and ../stress-protocol.md.
 
+mod bluez_config;
 mod control;
 mod gatt;
 mod script;
@@ -36,6 +37,46 @@ struct Cli {
     /// Size in bytes of the LARGE characteristic value.
     #[arg(long, default_value_t = 512)]
     large_size: usize,
+
+    /// Only check the BlueZ configuration (`[GATT] Client = false`) and exit
+    /// with status 0 (ok) or 1 (not ok).
+    #[arg(long)]
+    check_config: bool,
+
+    /// Start even if BlueZ's GATT client role is enabled. Client-initiated
+    /// disconnects from Android will then not drop the link.
+    #[arg(long)]
+    ignore_bluez_config: bool,
+}
+
+/// Verifies `[GATT] Client = false`. Returns whether the server may start.
+fn check_bluez_config(ignore: bool) -> bool {
+    match bluez_config::gatt_client_setting() {
+        Ok(bluez_config::GattClient::Disabled) => {
+            log("info", "bluez config ok: [GATT] Client = false");
+            true
+        }
+        Ok(setting) => {
+            let msg = bluez_config::enabled_message(&setting);
+            if ignore {
+                log("warning", format!("{msg} (ignored)"));
+                true
+            } else {
+                log("error", msg);
+                false
+            }
+        }
+        Err(err) => {
+            log(
+                "warning",
+                format!(
+                    "could not verify the BlueZ configuration ({err}); make sure [GATT] Client = false is set in {}",
+                    bluez_config::MAIN_CONF
+                ),
+            );
+            true
+        }
+    }
 }
 
 // current_thread on purpose: bluer spawns one task per incoming D-Bus method
@@ -50,6 +91,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     if cli.counter_interval_ms == 0 {
         bail!("--counter-interval-ms must be > 0");
+    }
+    let config_ok = check_bluez_config(cli.ignore_bluez_config);
+    if cli.check_config {
+        std::process::exit(i32::from(!config_ok));
+    }
+    if !config_ok {
+        bail!("refusing to start with BlueZ's GATT client role enabled");
     }
 
     let session = bluer::Session::new()
