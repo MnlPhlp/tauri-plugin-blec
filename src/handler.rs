@@ -364,9 +364,18 @@ impl Handler {
         on_disconnect: OnDisconnectHandler,
         allow_ibeacons: bool,
     ) -> Result<(), Error> {
-        if self.devices.lock().await.is_empty() {
-            self.discover(None, 1000, ScanFilter::None, allow_ibeacons)
+        if !self.devices.lock().await.contains_key(address) {
+            // run a short scan to try and find the device
+            let (tx, mut rx) = mpsc::channel(8);
+            self.discover(Some(tx), 1000, ScanFilter::None, allow_ibeacons)
                 .await?;
+            while let Some(devices) = rx.recv().await {
+                for dev in devices {
+                    if dev.address == address {
+                        break;
+                    }
+                }
+            }
         }
         // cancel any running discovery
         let _ = self.stop_scan().await;

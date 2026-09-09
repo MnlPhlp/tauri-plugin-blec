@@ -54,7 +54,6 @@ async fn connect_happy_path() {
 /// which aborts the polling task before its first 200 ms poll, so the device
 /// list stays empty and the connect fails with `UnknownPeripheral`.
 #[tokio::test(start_paused = true)]
-#[ignore = "BUG: connect() without a prior scan always fails with UnknownPeripheral, its own scan is aborted by the following stop_scan()"]
 async fn connect_without_prior_scan() {
     let (world, handler) = test_world();
     let device = stress_device(&world);
@@ -66,6 +65,31 @@ async fn connect_without_prior_scan() {
         .expect("connect without prior scan");
     assert!(handler.is_connected());
     assert!(device.is_connected());
+}
+
+/// The same scan-if-unknown path, but for a device that never shows up:
+/// `connect` must give up once the short scan is over instead of waiting
+/// on the discovery channel forever.
+#[tokio::test(start_paused = true)]
+async fn connect_without_prior_scan_missing_device_does_not_hang() {
+    let (world, handler) = test_world();
+    // another device is around, so the scan does report devices - just not the wanted one
+    let _other = other_device(&world);
+
+    let (on_disconnect, counter) = disconnect_counter();
+    let result = tokio::time::timeout(
+        Duration::from_secs(60),
+        handler.connect("11:22:33:44:55:66", on_disconnect, false),
+    )
+    .await
+    .expect("connect did not return");
+    assert!(
+        matches!(result, Err(Error::UnknownPeripheral(_))),
+        "{result:?}"
+    );
+    assert!(!handler.is_scanning().await, "scan left running");
+    assert_disconnected(handler).await;
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test(start_paused = true)]
