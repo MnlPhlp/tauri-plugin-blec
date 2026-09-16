@@ -43,9 +43,11 @@ pub enum Error {
     #[error("Failed to join Task: {0}")]
     JoinError(#[from] tokio::task::JoinError),
 
+    /// Something went wrong on the android side of the plugin, or in the JNI
+    /// bridge to it.
     #[cfg(target_os = "android")]
-    #[error(transparent)]
-    PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+    #[error("android: {0}")]
+    Android(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -56,5 +58,12 @@ impl Serialize for Error {
         S: Serializer,
     {
         serializer.serialize_str(self.to_string().as_ref())
+    }
+}
+
+#[cfg(target_os = "android")]
+impl From<jni::errors::Error> for Error {
+    fn from(e: jni::errors::Error) -> Self {
+        Error::Android(e.to_string())
     }
 }

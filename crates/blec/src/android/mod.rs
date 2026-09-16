@@ -1,3 +1,12 @@
+//! The android BLE backend.
+//!
+//! Implements the btleplug traits the [`Handler`](crate::Handler) uses on top of
+//! the Kotlin side, which it reaches through the JNI [`bridge`].
+
+mod bridge;
+
+pub use bridge::{init, set_activity};
+
 use crate::ALLOW_IBEACONS;
 use async_trait::async_trait;
 use base64::Engine;
@@ -8,45 +17,67 @@ use btleplug::{
     },
     platform::PeripheralId,
 };
-use futures::Stream;
-use once_cell::sync::{Lazy, OnceCell};
+use futures::{Stream, StreamExt};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use std::{
     collections::{BTreeSet, HashMap},
     pin::Pin,
     vec,
 };
-use tauri::{
-    ipc::{Channel, InvokeResponseBody},
-    plugin::PluginHandle,
-    AppHandle, Wry,
-};
 use tokio::sync::RwLock;
-use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::error::Error;
 use crate::models::BondingPeripheral;
 use crate::Handler;
 
 type Result<T> = std::result::Result<T, btleplug::Error>;
 
-static HANDLE: OnceCell<PluginHandle<Wry>> = OnceCell::new();
+/// Timeout for the commands that only read state the Kotlin side already has.
+/// Everything that talks to the radio uses the matching [`crate::Timeouts`].
+const IPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub static REQUESTED_MTU: AtomicU16 = AtomicU16::new(517);
 
-fn get_handle() -> &'static PluginHandle<Wry> {
-    HANDLE.get().expect("plugin handle not initialized")
+fn ble_err(e: Error) -> btleplug::Error {
+    btleplug::Error::RuntimeError(e.to_string())
 }
 
-pub fn init<C: serde::de::DeserializeOwned>(
-    _app: &AppHandle<Wry>,
-    api: tauri::plugin::PluginApi<Wry, C>,
-) -> std::result::Result<(), crate::error::Error> {
-    let handle = api.register_android_plugin("com.plugin.blec", "BleClientPlugin")?;
-    HANDLE.set(handle).unwrap();
-    Ok(())
+/// The timeouts configured on the handler, or the defaults while it is not
+/// initialized yet.
+fn timeouts() -> crate::models::Timeouts {
+    crate::get_handler().map_or_else(|_| crate::models::Timeouts::default(), Handler::timeouts)
+}
+
+/// Checks if the app has the necessary permissions to use BLE, asking for them
+/// if they are missing.
+///
+/// If they were denied before, android does not show the dialog again, so with
+/// `ask_if_denied` the user is sent to the app's settings page instead.
+pub(crate) async fn check_permissions(ask_if_denied: bool) -> std::result::Result<bool, Error> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CheckPermissionsParams {
+        ask_if_denied: bool,
+        allow_ibeacons: bool,
+    }
+    // Permission requests wait for the user, so there is no useful timeout here
+    // beyond "the activity never came back".
+    let res: BoolResult = bridge::call(
+        "check_permissions",
+        CheckPermissionsParams {
+            ask_if_denied,
+            allow_ibeacons: ALLOW_IBEACONS.load(Ordering::Relaxed),
+        },
+        Duration::from_secs(300),
+    )
+    .await?;
+    Ok(res.result)
 }
 
 #[derive(Debug, Clone)]
@@ -54,39 +85,22 @@ pub struct Adapter;
 static DEVICES: Lazy<RwLock<HashMap<PeripheralId, Peripheral>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// The services discovered per peripheral.
+///
+/// `btleplug::api::Peripheral::services()` is sync, so it cannot ask the Kotlin
+/// side; `discover_services` fills this in and `services` reads it back. A
+/// connect or disconnect drops the entry, because the services belong to the
+/// GATT link that just went away.
+static SERVICES: Lazy<StdRwLock<HashMap<PeripheralId, BTreeSet<Service>>>> =
+    Lazy::new(|| StdRwLock::new(HashMap::new()));
+
+/// The task forwarding scan results into [`DEVICES`], one per running scan.
+static SCAN_TASK: Lazy<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
 #[derive(serde::Deserialize)]
 struct PeripheralResult {
     result: Peripheral,
-}
-
-fn on_device_callback(response: InvokeResponseBody) -> std::result::Result<(), tauri::Error> {
-    let device = match response.deserialize::<PeripheralResult>() {
-        Ok(PeripheralResult { result }) => result,
-        Err(e) => {
-            tracing::error!("failed to deserialize peripheral: {:?}", e);
-            return Err(tauri::Error::from(e));
-        }
-    };
-    let mut devices = DEVICES.blocking_write();
-    tracing::trace!("device: {device:?}");
-    if let Some(enty) = devices.get_mut(&device.id) {
-        *enty = device;
-    } else {
-        devices.insert(device.id.clone(), device);
-    }
-    Ok(())
-}
-
-pub fn check_permissions(
-    ask_if_denied: bool,
-) -> std::result::Result<bool, tauri::plugin::mobile::PluginInvokeError> {
-    let result: BoolResult = get_handle().run_mobile_plugin(
-        "check_permissions",
-        serde_json::json!({
-            "askIfDenied": ask_if_denied
-        }),
-    )?;
-    Ok(result.result)
 }
 
 #[allow(dependency_on_unit_never_type_fallback)]
@@ -96,40 +110,48 @@ impl btleplug::api::Central for Adapter {
 
     async fn clear_peripherals(&self) -> Result<()> {
         DEVICES.write().await.clear();
-        get_handle()
-            .run_mobile_plugin::<()>("clear_peripherals", serde_json::Value::Null)
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        bridge::call::<_, ()>(
+            "clear_peripherals",
+            serde_json::Value::Null,
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
         Ok(())
     }
 
     async fn events(&self) -> Result<Pin<Box<dyn Stream<Item = CentralEvent> + Send>>> {
-        let (tx, rx) = tokio::sync::mpsc::channel::<CentralEvent>(1);
-        let stream = ReceiverStream::new(rx);
-        let channel: Channel = Channel::new(move |response| {
-            let value = response
-                .deserialize::<serde_json::Value>()
-                .expect("failed to deserialize event");
+        #[derive(serde::Serialize)]
+        struct EventParams {
+            channel: bridge::Channel,
+        }
+        let (channel, rx) = bridge::channel().map_err(ble_err)?;
+        bridge::call::<_, ()>("events", EventParams { channel }, IPC_DEFAULT_TIMEOUT)
+            .await
+            .map_err(ble_err)?;
+        let stream = rx.filter_map(|value| async move {
             // Diagnostic from the Kotlin side, not a btleplug event: our
             // BluetoothGatt is gone but the phone keeps the radio link for
             // another GATT client, so the peripheral never sees a disconnect
             // and the next connect silently reuses that link.
             if let Some(address) = value.get("LinkStillConnected") {
-                tracing::warn!(
+                warn!(
                     "disconnected from {address}, but the phone still holds a GATT link to it \
                      (another app or a leaked BluetoothGatt): the device will not notice the disconnect"
                 );
-                return Ok(());
+                return None;
             }
-            let event: CentralEvent =
-                serde_json::from_value(value).expect("failed to deserialize event");
-            debug!("sending event: {event:?}");
-            tx.blocking_send(event)
-                .expect("failed to send notification");
-            Ok(())
+            match serde_json::from_value::<CentralEvent>(value) {
+                Ok(event) => {
+                    debug!("sending event: {event:?}");
+                    Some(event)
+                }
+                Err(e) => {
+                    tracing::error!("failed to deserialize event: {e}");
+                    None
+                }
+            }
         });
-        get_handle()
-            .run_mobile_plugin::<()>("events", channel)
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
         Ok(Box::pin(stream))
     }
 
@@ -139,27 +161,57 @@ impl btleplug::api::Central for Adapter {
         struct ScanParams {
             services: Vec<Uuid>,
             allow_ibeacons: bool,
-            on_device: Channel<serde_json::Value>,
+            on_device: bridge::Channel,
         }
         DEVICES.write().await.clear();
-        let on_device = Channel::new(on_device_callback);
-        get_handle()
-            .run_mobile_plugin::<()>(
-                "start_scan",
-                ScanParams {
-                    services: filter.services,
-                    allow_ibeacons: ALLOW_IBEACONS.load(std::sync::atomic::Ordering::Relaxed),
-                    on_device,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        let (on_device, mut rx) = bridge::channel().map_err(ble_err)?;
+        let task = tokio::spawn(async move {
+            while let Some(value) = rx.next().await {
+                let device = match serde_json::from_value::<PeripheralResult>(value) {
+                    Ok(PeripheralResult { result }) => result,
+                    Err(e) => {
+                        tracing::error!("failed to deserialize peripheral: {e}");
+                        continue;
+                    }
+                };
+                tracing::trace!("device: {device:?}");
+                DEVICES.write().await.insert(device.id.clone(), device);
+            }
+        });
+        // A scan that is still running keeps its own channel registered; replace
+        // it so only the new scan's results reach `DEVICES`.
+        if let Some(previous) = SCAN_TASK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(task)
+        {
+            previous.abort();
+        }
+        bridge::call::<_, ()>(
+            "start_scan",
+            ScanParams {
+                services: filter.services,
+                allow_ibeacons: ALLOW_IBEACONS.load(Ordering::Relaxed),
+                on_device,
+            },
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
         Ok(())
     }
 
     async fn stop_scan(&self) -> Result<()> {
-        get_handle()
-            .run_mobile_plugin::<()>("stop_scan", serde_json::Value::Null)
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        bridge::call::<_, ()>("stop_scan", serde_json::Value::Null, IPC_DEFAULT_TIMEOUT)
+            .await
+            .map_err(ble_err)?;
+        if let Some(task) = SCAN_TASK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            task.abort();
+        }
         Ok(())
     }
 
@@ -189,9 +241,13 @@ impl btleplug::api::Central for Adapter {
                 .to_string()
                 .parse()
                 .map_err(|_| btleplug::Error::DeviceNotFound)?;
-            let res: PeripheralResult = get_handle()
-                .run_mobile_plugin("retrieve_peripheral", ConnectParams { address })
-                .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+            let res: PeripheralResult = bridge::call(
+                "retrieve_peripheral",
+                ConnectParams { address },
+                IPC_DEFAULT_TIMEOUT,
+            )
+            .await
+            .map_err(ble_err)?;
             // The java side answers from `BluetoothDevice`, which knows nothing
             // about advertisements, so an entry a scan already filled in is
             // kept: the point of the call is repairing the java device map.
@@ -209,7 +265,7 @@ impl btleplug::api::Central for Adapter {
         DEVICES
             .read()
             .await
-            .get(&id)
+            .get(id)
             .cloned()
             .ok_or(btleplug::Error::DeviceNotFound)
     }
@@ -219,13 +275,17 @@ impl btleplug::api::Central for Adapter {
     }
 
     async fn adapter_info(&self) -> Result<String> {
-        todo!()
+        Ok("android".to_string())
     }
 
     async fn adapter_state(&self) -> Result<CentralState> {
-        let res: StringResult = get_handle()
-            .run_mobile_plugin("adapter_state", serde_json::Value::Null)
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        let res: StringResult = bridge::call(
+            "adapter_state",
+            serde_json::Value::Null,
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
         match res.result.as_str() {
             "unknown" => Ok(CentralState::Unknown),
             "off" => Ok(CentralState::PoweredOff),
@@ -261,9 +321,9 @@ where
     D: serde::Deserializer<'a>,
 {
     let s = String::deserialize(deserializer)?;
-    Ok(base64::engine::general_purpose::STANDARD
+    base64::engine::general_purpose::STANDARD
         .decode(s)
-        .map_err(serde::de::Error::custom)?)
+        .map_err(serde::de::Error::custom)
 }
 
 fn deserialize_base64_map<'a, D, K>(
@@ -361,17 +421,19 @@ struct ReadParams {
 #[async_trait::async_trait]
 impl BondingPeripheral for Peripheral {
     async fn is_bonded(&self) -> Result<bool> {
-        let res: BoolResult = get_handle()
-            .run_mobile_plugin(
-                "is_bonded",
-                ConnectParams {
-                    address: self.address,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
+        let res: BoolResult = bridge::call(
+            "is_bonded",
+            ConnectParams {
+                address: self.address,
+            },
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
         Ok(res.result)
     }
 }
+
 #[allow(dependency_on_unit_never_type_fallback)]
 #[async_trait::async_trait]
 impl btleplug::api::Peripheral for Peripheral {
@@ -405,7 +467,233 @@ impl btleplug::api::Peripheral for Peripheral {
         }))
     }
 
+    /// The services [`Self::discover_services`] found, empty before it ran.
     fn services(&self) -> BTreeSet<Service> {
+        SERVICES
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    async fn is_connected(&self) -> Result<bool> {
+        let res: BoolResult = bridge::call(
+            "is_connected",
+            ConnectParams {
+                address: self.address,
+            },
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
+        Ok(res.result)
+    }
+
+    async fn connect(&self) -> Result<()> {
+        let timeouts = timeouts();
+        self.forget_services();
+        bridge::call::<_, ()>(
+            "connect",
+            ConnectParams {
+                address: self.address,
+            },
+            timeouts.connect,
+        )
+        .await
+        .map_err(ble_err)?;
+        info!("connected to: {:?}", self.address);
+        let requested_mtu = REQUESTED_MTU.load(Ordering::Relaxed);
+        if requested_mtu > 0 {
+            debug!("requesting mtu");
+            let mtu: MtuResponse = bridge::call(
+                "request_mtu",
+                MtuParams {
+                    address: self.address,
+                    mtu: requested_mtu,
+                },
+                timeouts.connect,
+            )
+            .await
+            .map_err(ble_err)?;
+            info!("mtu set to: {:?}", mtu.mtu);
+            self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    async fn disconnect(&self) -> Result<()> {
+        self.forget_services();
+        bridge::call::<_, ()>(
+            "disconnect",
+            ConnectParams {
+                address: self.address,
+            },
+            timeouts().disconnect,
+        )
+        .await
+        .map_err(ble_err)?;
+        Ok(())
+    }
+
+    async fn discover_services(&self) -> Result<()> {
+        bridge::call::<_, ()>(
+            "discover_services",
+            ConnectParams {
+                address: self.address,
+            },
+            timeouts().discover_services,
+        )
+        .await
+        .map_err(ble_err)?;
+        debug!("discover services plugin call returned");
+        self.fetch_services().await?;
+        Ok(())
+    }
+
+    async fn write(
+        &self,
+        characteristic: &Characteristic,
+        data: &[u8],
+        write_type: WriteType,
+    ) -> Result<()> {
+        let (timeout, skip_waiting_for_completion) = crate::get_handler()
+            .map(|handler| handler.get_write_behaviour())
+            .unwrap_or((0, false));
+        let write_timeout = timeouts().write;
+        // 0 means "no timeout" on the Kotlin side, which would leave a queued
+        // write pending forever. Fall back to the handler timeout so the queue
+        // expiry always exists and fires before the Rust side gives up.
+        let timeout = if timeout == 0 {
+            u32::try_from(write_timeout.as_millis()).unwrap_or(u32::MAX)
+        } else {
+            timeout
+        };
+        bridge::call::<_, ()>(
+            "write",
+            serde_json::json!({
+                "address": self.address,
+                "characteristic": characteristic.uuid,
+                "service": characteristic.service_uuid,
+                "data": data,
+                "withResponse": matches!(write_type, WriteType::WithResponse),
+                "timeout": timeout,
+                "skipWaitingForWriteToComplete": skip_waiting_for_completion
+            }),
+            write_timeout,
+        )
+        .await
+        .map_err(ble_err)?;
+        Ok(())
+    }
+
+    async fn read(&self, characteristic: &Characteristic) -> Result<Vec<u8>> {
+        #[derive(serde::Deserialize)]
+        struct ReadResult {
+            #[serde(deserialize_with = "deserialize_base64")]
+            value: Vec<u8>,
+        }
+        let res: ReadResult = bridge::call(
+            "read",
+            ReadParams {
+                address: self.address,
+                characteristic: characteristic.uuid,
+                service: characteristic.service_uuid,
+            },
+            timeouts().read,
+        )
+        .await
+        .map_err(ble_err)?;
+        debug!("read: {:?}", res.value);
+        Ok(res.value)
+    }
+
+    async fn subscribe(&self, characteristic: &Characteristic) -> Result<()> {
+        bridge::call::<_, ()>(
+            "subscribe",
+            ReadParams {
+                address: self.address,
+                characteristic: characteristic.uuid,
+                service: characteristic.service_uuid,
+            },
+            timeouts().subscribe,
+        )
+        .await
+        .map_err(ble_err)?;
+        Ok(())
+    }
+
+    async fn unsubscribe(&self, characteristic: &Characteristic) -> Result<()> {
+        bridge::call::<_, ()>(
+            "unsubscribe",
+            ReadParams {
+                address: self.address,
+                characteristic: characteristic.uuid,
+                service: characteristic.service_uuid,
+            },
+            timeouts().subscribe,
+        )
+        .await
+        .map_err(ble_err)?;
+        Ok(())
+    }
+
+    async fn notifications(&self) -> Result<Pin<Box<dyn Stream<Item = ValueNotification> + Send>>> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Notification {
+            uuid: Uuid,
+            service_uuid: Uuid,
+            #[serde(deserialize_with = "deserialize_base64")]
+            data: Vec<u8>,
+        }
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct NotifyParams {
+            address: BDAddr,
+            channel: bridge::Channel,
+        }
+        let (channel, rx) = bridge::channel().map_err(ble_err)?;
+        bridge::call::<_, ()>(
+            "notifications",
+            NotifyParams {
+                address: self.address,
+                channel,
+            },
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
+        let stream = rx.filter_map(|value| async move {
+            match serde_json::from_value::<Notification>(value) {
+                Ok(notification) => Some(ValueNotification {
+                    uuid: notification.uuid,
+                    service_uuid: notification.service_uuid,
+                    value: notification.data,
+                }),
+                Err(e) => {
+                    tracing::error!("failed to deserialize notification: {e}");
+                    None
+                }
+            }
+        });
+        Ok(Box::pin(stream))
+    }
+
+    async fn write_descriptor(&self, _descriptor: &Descriptor, _data: &[u8]) -> Result<()> {
+        Err(btleplug::Error::NotSupported(
+            "write_descriptor".to_string(),
+        ))
+    }
+
+    async fn read_descriptor(&self, _descriptor: &Descriptor) -> Result<Vec<u8>> {
+        Err(btleplug::Error::NotSupported("read_descriptor".to_string()))
+    }
+}
+
+impl Peripheral {
+    /// Reads the discovered services from the Kotlin side into [`SERVICES`].
+    async fn fetch_services(&self) -> Result<()> {
         #[derive(serde::Deserialize)]
         struct ResCharacteristic {
             uuid: Uuid,
@@ -424,15 +712,16 @@ impl btleplug::api::Peripheral for Peripheral {
         struct ServicesResult {
             result: Vec<ResService>,
         }
-        let res: ServicesResult = get_handle()
-            .run_mobile_plugin(
-                "services",
-                ConnectParams {
-                    address: self.address,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))
-            .expect("failed to get services");
+
+        let res: ServicesResult = bridge::call(
+            "services",
+            ConnectParams {
+                address: self.address,
+            },
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
         let mut services = BTreeSet::new();
         for s in res.result {
             let mut characteristics = BTreeSet::new();
@@ -458,238 +747,17 @@ impl btleplug::api::Peripheral for Peripheral {
                 characteristics,
             });
         }
-        services
-    }
-
-    async fn is_connected(&self) -> Result<bool> {
-        let res: BoolResult = get_handle()
-            .run_mobile_plugin(
-                "is_connected",
-                ConnectParams {
-                    address: self.address,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
-        Ok(res.result)
-    }
-
-    async fn connect(&self) -> Result<()> {
-        let timeouts = timeouts();
-        call_plugin_with_timeout::<_, ()>(
-            "connect",
-            ConnectParams {
-                address: self.address,
-            },
-            timeouts.connect,
-        )
-        .await?;
-        info!("connected to: {:?}", self.address);
-        let requested_mtu = REQUESTED_MTU.load(Ordering::Relaxed);
-        if requested_mtu > 0 {
-            debug!("requesting mtu");
-            let mtu: MtuResponse = call_plugin_with_timeout(
-                "request_mtu",
-                MtuParams {
-                    address: self.address,
-                    mtu: requested_mtu,
-                },
-                timeouts.connect,
-            )
-            .await?;
-            info!("mtu set to: {:?}", mtu.mtu);
-            self.mtu_val.store(mtu.mtu, Ordering::Relaxed);
-        }
+        SERVICES
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(self.id.clone(), services);
         Ok(())
     }
 
-    async fn disconnect(&self) -> Result<()> {
-        call_plugin_with_timeout::<_, ()>(
-            "disconnect",
-            ConnectParams {
-                address: self.address,
-            },
-            timeouts().disconnect,
-        )
-        .await?;
-        Ok(())
+    fn forget_services(&self) {
+        SERVICES
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
     }
-
-    async fn discover_services(&self) -> Result<()> {
-        call_plugin_with_timeout::<_, ()>(
-            "discover_services",
-            ConnectParams {
-                address: self.address,
-            },
-            timeouts().discover_services,
-        )
-        .await?;
-        debug!("discover services plugin call returned");
-        Ok(())
-    }
-
-    async fn write(
-        &self,
-        characteristic: &Characteristic,
-        data: &[u8],
-        write_type: WriteType,
-    ) -> Result<()> {
-        let (timeout, skip_waiting_for_completion) = crate::get_handler()
-            .map(|handler| handler.get_write_behaviour())
-            .unwrap_or((0, false));
-        let write_timeout = timeouts().write;
-        // 0 means "no timeout" on the Kotlin side, which would leave a queued
-        // write pending forever. Fall back to the handler timeout so the queue
-        // expiry always exists and fires before the Rust side gives up.
-        let timeout = if timeout == 0 {
-            u32::try_from(write_timeout.as_millis()).unwrap_or(u32::MAX)
-        } else {
-            timeout
-        };
-        call_plugin_with_timeout::<_, ()>(
-            "write",
-            serde_json::json!({
-                "address": self.address,
-                "characteristic": characteristic.uuid,
-                "service": characteristic.service_uuid,
-                "data": data,
-                "withResponse": matches!(write_type, WriteType::WithResponse),
-                "timeout": timeout,
-                "skipWaitingForWriteToComplete": skip_waiting_for_completion
-            }),
-            write_timeout,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn read(&self, characteristic: &Characteristic) -> Result<Vec<u8>> {
-        #[derive(serde::Deserialize)]
-        struct ReadResult {
-            #[serde(deserialize_with = "deserialize_base64")]
-            value: Vec<u8>,
-        }
-        let res: ReadResult = call_plugin_with_timeout(
-            "read",
-            ReadParams {
-                address: self.address,
-                characteristic: characteristic.uuid,
-                service: characteristic.service_uuid,
-            },
-            timeouts().read,
-        )
-        .await?;
-        debug!("read: {:?}", res.value);
-        Ok(res.value)
-    }
-
-    async fn subscribe(&self, characteristic: &Characteristic) -> Result<()> {
-        call_plugin_with_timeout::<_, ()>(
-            "subscribe",
-            ReadParams {
-                address: self.address,
-                characteristic: characteristic.uuid,
-                service: characteristic.service_uuid,
-            },
-            timeouts().subscribe,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn unsubscribe(&self, characteristic: &Characteristic) -> Result<()> {
-        call_plugin_with_timeout::<_, ()>(
-            "unsubscribe",
-            ReadParams {
-                address: self.address,
-                characteristic: characteristic.uuid,
-                service: characteristic.service_uuid,
-            },
-            timeouts().subscribe,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn notifications(&self) -> Result<Pin<Box<dyn Stream<Item = ValueNotification> + Send>>> {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Notification {
-            uuid: Uuid,
-            service_uuid: Uuid,
-            #[serde(deserialize_with = "deserialize_base64")]
-            data: Vec<u8>,
-        }
-        #[derive(serde::Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct NotifyParams {
-            address: BDAddr,
-            channel: Channel<Notification>,
-        }
-        let (tx, rx) = tokio::sync::mpsc::channel::<ValueNotification>(1);
-        let stream = ReceiverStream::new(rx);
-        let channel: Channel<Notification> = Channel::new(move |response| {
-            match response.deserialize::<Notification>() {
-                Ok(notification) => tx
-                    .blocking_send(ValueNotification {
-                        uuid: notification.uuid,
-                        service_uuid: notification.service_uuid,
-                        value: notification.data,
-                    })
-                    .expect("failed to send notification"),
-                Err(e) => {
-                    tracing::error!("failed to deserialize notification: {:?}", e);
-                    return Err(tauri::Error::from(e));
-                }
-            };
-            Ok(())
-        });
-        get_handle()
-            .run_mobile_plugin::<()>(
-                "notifications",
-                NotifyParams {
-                    address: self.address,
-                    channel,
-                },
-            )
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))?;
-        Ok(Box::pin(stream))
-    }
-
-    async fn write_descriptor(&self, _descriptor: &Descriptor, _data: &[u8]) -> Result<()> {
-        todo!()
-    }
-
-    async fn read_descriptor(&self, _descriptor: &Descriptor) -> Result<Vec<u8>> {
-        todo!()
-    }
-}
-
-/// Added on top of the operation timeout for the IPC call, so the operation
-/// timeout in the handler is the one that fires and the IPC timeout stays a
-/// safety net for a Kotlin side that never answers at all.
-const IPC_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
-
-/// The timeouts configured on the handler, or the defaults while it is not
-/// initialized yet.
-fn timeouts() -> crate::models::Timeouts {
-    crate::get_handler().map_or_else(|_| crate::models::Timeouts::default(), Handler::timeouts)
-}
-
-async fn call_plugin_with_timeout<
-    P: serde::Serialize + Send + 'static,
-    R: serde::de::DeserializeOwned + Send + 'static,
->(
-    func: &'static str,
-    params: P,
-    timeout: Duration,
-) -> Result<R> {
-    let handle = tokio::task::spawn_blocking(move || {
-        get_handle()
-            .run_mobile_plugin(func, params)
-            .map_err(|e| btleplug::Error::RuntimeError(e.to_string()))
-    });
-    tokio::time::timeout(timeout + IPC_TIMEOUT_MARGIN, handle)
-        .await
-        .map_err(|_| btleplug::Error::RuntimeError(format!("timeout during {func}")))?
-        .map_err(|e| btleplug::Error::RuntimeError(format!("tokio join error: {e}")))?
 }

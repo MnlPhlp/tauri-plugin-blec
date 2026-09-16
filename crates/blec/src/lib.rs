@@ -72,9 +72,9 @@ pub fn get_handler() -> Result<&'static Handler> {
 /// # Errors
 /// Returns an error if the permission check itself fails.
 #[allow(unused)]
-pub fn check_permissions(ask_if_denied: bool) -> Result<bool> {
+pub async fn check_permissions(ask_if_denied: bool) -> Result<bool> {
     #[cfg(target_os = "android")]
-    return Ok(android::check_permissions(ask_if_denied)?);
+    return android::check_permissions(ask_if_denied).await;
     #[cfg(not(target_os = "android"))]
     return Ok(true);
 }

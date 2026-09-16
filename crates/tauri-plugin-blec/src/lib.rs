@@ -31,12 +31,22 @@ pub fn try_init() -> Result<TauriPlugin<Wry>> {
     #[allow(unused)]
     let plugin = Builder::new("blec")
         .invoke_handler(commands::commands())
-        .setup(|app, api| {
-            #[cfg(target_os = "android")]
-            blec::android::init(app, api)?;
-            Ok(())
-        })
         .on_event(|_app, event| {
+            // The kotlin side needs an Activity to request the runtime
+            // permissions from, and only the host knows one. Wait for `Ready`:
+            // before that there is no activity for wry to dispatch to.
+            #[cfg(target_os = "android")]
+            if matches!(event, tauri::RunEvent::Ready) {
+                tauri::wry::prelude::dispatch(|env, activity, _webview| {
+                    // SAFETY: wry calls this on the android main thread with its
+                    // own JNIEnv and the activity alive for the call.
+                    if let Err(e) = unsafe {
+                        blec::android::set_activity(env.get_raw().cast(), activity.as_raw().cast())
+                    } {
+                        tracing::error!("could not hand the activity to blec: {e}");
+                    }
+                });
+            }
             // Leaving a GATT link open past the end of the process keeps the
             // peripheral "connected" until it times out on its own, during
             // which it stops advertising and looks like it disappeared.

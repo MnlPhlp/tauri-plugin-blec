@@ -230,11 +230,11 @@ pub(crate) async fn unsubscribe<R: Runtime>(
 }
 
 #[command]
-pub(crate) fn check_permissions(
+pub(crate) async fn check_permissions(
     _app: AppHandle<impl Runtime>,
     ask_if_denied: bool,
 ) -> Result<bool> {
-    blec::check_permissions(ask_if_denied)
+    blec::check_permissions(ask_if_denied).await
 }
 
 #[command]
