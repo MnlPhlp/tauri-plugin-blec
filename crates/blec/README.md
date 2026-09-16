@@ -49,7 +49,11 @@ To keep that an implementation detail rather than something every app has to wir
 is compiled to a single `classes.dex` that is committed as `src/android/classes.dex` and embedded
 with `include_bytes!`. At startup `blec` loads it with an `InMemoryDexClassLoader` and binds the
 callbacks with `RegisterNatives` (exported `Java_*` symbols never resolve for a dex-loaded class,
-because ART looks them up through the class' own loader). **An app using `blec` therefore needs no
+because ART looks them up through the class' own loader). The loader's parent is the boot class
+loader, not the app's: class loading is parent-first, and with the app's loader the app's own
+kotlin stdlib (a Tauri app has one) would shadow the shrunk copy R8 optimized the Kotlin against,
+which shows up as `IllegalAccessError` on stdlib internals. The Kotlin side only needs the
+framework, so it shares nothing with the app. **An app using `blec` therefore needs no
 gradle module and no kotlin — only the permissions in its manifest.**
 
 Rebuild the dex after changing anything under `android/dex/src` and commit the result:

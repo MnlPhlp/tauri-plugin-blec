@@ -24,6 +24,12 @@ Corrections found while running it (the notes above still state the original ass
   for hosts without `ndk-context`, called by the plugin from `wry::prelude::dispatch` on
   `RunEvent::Ready`, where the handler is initialized on Android instead of at plugin build time.
   Dioxus still initializes `ndk-context` itself and keeps using plain `blec::init()`.
+- **The dex must not use the app's class loader as parent.** The plan said `context.getClassLoader()`.
+  Parent-first loading then resolved `kotlin.*` from the Tauri app's own stdlib copy, while R8 (with
+  `-allowaccessmodification` from `proguard-android-optimize.txt`) had inlined `mutableListOf` into
+  `BlecPlugin` and widened the package-private `kotlin.collections.ArrayAsCollection` only in our copy:
+  `IllegalAccessError` on the first command. Parent is now the boot class loader
+  (`Object.class.getClassLoader()`), so the embedded stdlib is fully isolated from the app's.
 
 Decisions already taken: core crate name `blec` (owned on crates.io, currently 0.3.4), Cargo workspace
 in this repo (`crates/blec`, `crates/tauri-plugin-blec`), Dioxus 0.7.x example, Tauri plugin keeps a

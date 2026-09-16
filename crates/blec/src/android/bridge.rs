@@ -168,7 +168,7 @@ pub unsafe fn init_with(env: *mut jni::sys::JNIEnv, context: jobject) -> Result<
 /// Loads the dex, binds the natives and runs `Bridge.init(context)`. Shared by
 /// [`init`] and [`init_with`], which only differ in where the env comes from.
 fn load_bridge(env: &mut Env<'_>, context: &JObject<'_>) -> Result<Global<JClass<'static>>, Error> {
-    let loader = load_dex(env, context)?;
+    let loader = load_dex(env)?;
     let class = LoaderContext::Loader(&loader)
         .load_class(env, jni_str!("com.plugin.blec.Bridge"), true)
         .map_err(|e| {
@@ -206,19 +206,20 @@ fn store_bridge(vm: JavaVM, class: Global<JClass<'static>>) {
     debug!("android bridge initialized");
 }
 
-fn load_dex<'local>(
-    env: &mut Env<'local>,
-    context: &JObject<'_>,
-) -> Result<JClassLoader<'local>, Error> {
-    let parent = env
-        .call_method(
-            context,
-            jni_str!("getClassLoader"),
-            jni_sig!(() -> java.lang.ClassLoader),
-            &[],
-        )?
-        .l()?;
-    let parent: JClassLoader = env.cast_local::<JClassLoader>(parent)?;
+/// Loads the embedded dex into a class loader of its own.
+///
+/// The parent is the *boot* class loader, not the app's. Class loading is
+/// parent-first, so with the app's loader as parent every `kotlin.*` class in
+/// the dex would be shadowed by the app's own copy of the kotlin stdlib, if it
+/// has one (Tauri apps do). That copy is a different version, and it is not
+/// the one R8 shrank our code against: R8 inlines stdlib calls and widens
+/// package-private stdlib classes (`-allowaccessmodification`) in *our* copy,
+/// so resolving them against the app's copy ends in `IllegalAccessError` or
+/// `NoSuchMethodError`. The Kotlin side only references the android framework,
+/// `java.*`, `org.json` and its own shrunk stdlib, so it needs nothing from the
+/// app loader.
+fn load_dex<'local>(env: &mut Env<'local>) -> Result<JClassLoader<'local>, Error> {
+    let parent = boot_class_loader(env)?;
     // SAFETY: CLASSES_DEX is a `'static` slice in the binary's rodata, so the
     // buffer stays valid for as long as the class loader may read it. The JVM
     // only reads from it.
@@ -236,6 +237,36 @@ fn load_dex<'local>(
                  for this app (for example by the GrapheneOS 'dynamic code loading' toggle)"
             ))
         })?;
+    Ok(env.cast_local::<JClassLoader>(loader)?)
+}
+
+/// The loader the framework classes come from.
+///
+/// On android `Object.class.getClassLoader()` is the `BootClassLoader`
+/// singleton rather than `null` as on the JVM. Should that ever change, the
+/// system class loader is the next best thing: it delegates to the boot loader
+/// and adds only the (empty) system class path, not the app.
+fn boot_class_loader<'local>(env: &mut Env<'local>) -> Result<JClassLoader<'local>, Error> {
+    let object = env.find_class(jni_str!("java/lang/Object"))?;
+    let mut loader = env
+        .call_method(
+            &object,
+            jni_str!("getClassLoader"),
+            jni_sig!(() -> java.lang.ClassLoader),
+            &[],
+        )?
+        .l()?;
+    if loader.is_null() {
+        warn!("Object.class.getClassLoader() is null, falling back to the system class loader");
+        loader = env
+            .call_static_method(
+                jni_str!("java/lang/ClassLoader"),
+                jni_str!("getSystemClassLoader"),
+                jni_sig!(() -> java.lang.ClassLoader),
+                &[],
+            )?
+            .l()?;
+    }
     Ok(env.cast_local::<JClassLoader>(loader)?)
 }
 
