@@ -34,3 +34,9 @@ Corrections found while running it (the notes above still state the original ass
 Decisions already taken: core crate name `blec` (owned on crates.io, currently 0.3.4), Cargo workspace
 in this repo (`crates/blec`, `crates/tauri-plugin-blec`), Dioxus 0.7.x example, Tauri plugin keeps a
 manifest-only Android module.
+
+Added 2026-09-16: `crates/dioxus-blec`, hooks on `blec` plus the same manifest-only Android module,
+declared with `#[manganis::ffi("android")]` so `dx` merges the permissions into the app. Chosen over
+`Dioxus.toml` settings because `[android] manifest = "<file>"` is a dead key in dx 0.7 (parsed, never
+read) and `[android.permissions]` cannot express `neverForLocation`; details in
+`research-android-without-gradle.md`, section 3.

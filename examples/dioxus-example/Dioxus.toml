@@ -4,28 +4,7 @@ name = "dioxus-blec-example"
 [web.app]
 title = "blec"
 
+# The bluetooth permissions come with the `dioxus-blec` crate; the only android
+# setting the app needs is the minimum sdk that crate requires.
 [android]
 min_sdk = 26
-features = ["android.hardware.bluetooth_le"]
-
-# `dx` requires a description on every raw permission entry.
-[android.permissions]
-"android.permission.BLUETOOTH_CONNECT" = { description = "Connect to bluetooth devices" }
-"android.permission.BLUETOOTH_ADMIN" = { description = "Scan for bluetooth devices on android 11 and older" }
-"android.permission.ACCESS_FINE_LOCATION" = { description = "Required for bluetooth scanning on android 11 and older" }
-
-# Permissions whose attributes `[android.permissions]` cannot express. This is
-# pasted into the generated manifest after the permissions above.
-#
-# `dx` 0.7 also accepts `[android] manifest = "<file>"`, but never reads it: a
-# permission declared there is missing from the app and android reports it as
-# denied even when the user granted "Nearby devices".
-[android.raw]
-manifest = """
-    <!-- Declaring that the scan is not used to derive a location means android
-         does not ask for the location permission on top of it. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH"
-        android:maxSdkVersion="30" />
-"""

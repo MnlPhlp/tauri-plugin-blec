@@ -8,9 +8,8 @@ publish = false
 [workspace]
 
 [dependencies]
-blec = { path = "../../crates/blec" }
+dioxus-blec = { path = "../../crates/dioxus-blec" }
 dioxus = "0.7"
-tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 uuid = "1"
 
@@ -18,4 +17,4 @@ uuid = "1"
 default = []
 # Replaces the platform backend with blec's in-process mock, so the app can be
 # run on a machine without a bluetooth adapter.
-mock = ["blec/mock"]
+mock = ["dioxus-blec/mock"]

@@ -147,6 +147,11 @@ in the wild: panic without SDK (Slint/robius, breaks `cargo check` downstream), 
   `include ':plugins:<name>'` and `implementation(project(":plugins:<name>"))`, AGP merges its manifest.
   Generated Rust constructs the class via `(Landroid/app/Activity;)V` inside
   `manganis::android::with_activity`. Still compiles Kotlin, but automatic for the consumer.
+  The metadata travels in a `__ASSETS__` linker section like assets, so a *dependency* crate can
+  declare it (`extern "Kotlin" {}` may be empty; the plugin name then defaults to `plugin`). The path
+  may also be a prebuilt `.aar` (0.7.9: copied to `app/libs`, `implementation(files(...))`); AGP merges
+  the AAR's manifest too, so a checked-in AAR could ship blec's permissions and classes without Kotlin
+  on the consumer side. Only reaches dx users; cargo-apk/xbuild consumers still need the manual setup.
   https://docs.rs/manganis/latest/manganis/attr.ffi.html, example `examples/01-app-demos/geolocation-native-plugin/`.
 - JNI env: `packages/desktop/src/mobile.rs` runs `tao::android_binding!` + `wry::android_binding!`;
   `android_setup` calls `ndk_context::initialize_android_context(vm, activity)` → under Dioxus

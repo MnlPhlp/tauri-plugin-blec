@@ -6,7 +6,8 @@ On Linux, macOS, Windows and iOS this is a thin layer over
 [btleplug](https://github.com/deviceplug/btleplug); on Android it uses its own backend.
 
 For a Tauri app use [`tauri-plugin-blec`](../tauri-plugin-blec) instead, which wraps this crate
-in a plugin with a JavaScript API and re-exports the whole rust API.
+in a plugin with a JavaScript API and re-exports the whole rust API. For a Dioxus app use
+[`dioxus-blec`](../dioxus-blec), which adds hooks and carries the android permissions.
 
 ## Usage
 
