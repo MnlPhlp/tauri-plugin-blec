@@ -1,0 +1,16 @@
+[application]
+name = "dioxus-blec-example"
+
+[web.app]
+title = "blec"
+
+[android]
+min_sdk_version = 26
+# Merged into the generated manifest, for the parts the table below cannot
+# express (the `neverForLocation` flag on BLUETOOTH_SCAN).
+manifest = "android/AndroidManifest.xml"
+
+[android.permissions]
+"android.permission.BLUETOOTH_CONNECT" = {}
+"android.permission.BLUETOOTH_ADMIN" = {}
+"android.permission.ACCESS_FINE_LOCATION" = {}

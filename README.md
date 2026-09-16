@@ -18,6 +18,7 @@ On Linux, macOS, Windows and iOS the backend is
 ## Examples
 
 - [examples/plugin-blec-example](examples/plugin-blec-example) — Tauri + Vue app: scan, connect, send/receive.
+- [examples/dioxus-example](examples/dioxus-example) — the same, as a plain rust Dioxus app on `blec`.
 - [examples/test-server](examples/test-server) — GATT peripheral to test against (Linux/BlueZ).
 - [examples/stress-server](examples/stress-server) + [examples/stress-client](examples/stress-client) —
   scripted failure scenarios for the full stack, see [examples/stress-protocol.md](examples/stress-protocol.md).

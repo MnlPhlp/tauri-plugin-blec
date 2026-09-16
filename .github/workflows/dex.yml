@@ -1,0 +1,35 @@
+# The kotlin side of `blec` is committed as a prebuilt `classes.dex`. Rebuild it
+# whenever the sources change and fail if what is committed does not match.
+name: Android dex
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "crates/blec/android/**"
+      - ".github/workflows/dex.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "crates/blec/android/**"
+      - ".github/workflows/dex.yml"
+  workflow_dispatch:
+
+jobs:
+  dex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build classes.dex
+        run: crates/blec/android/build-dex.sh
+      - name: Check the committed dex is up to date
+        run: |
+          git diff --exit-code -- crates/blec/src/android/classes.dex || {
+            echo "crates/blec/src/android/classes.dex is out of date."
+            echo "Run crates/blec/android/build-dex.sh and commit the result."
+            exit 1
+          }
