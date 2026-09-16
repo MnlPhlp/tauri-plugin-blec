@@ -1,0 +1,4 @@
+/build
+/.gradle
+/dex/build
+/local.properties

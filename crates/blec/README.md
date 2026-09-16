@@ -39,6 +39,42 @@ simulation (`blec::mock`) that an app or a test can script: devices appear and d
 drop, operations fail, hang or answer slowly, notifications arrive. See the handler tests in
 `src/handler/tests`.
 
+## Android internals
+
+Android has no pure-rust path to GATT: `BluetoothGattCallback` and `ScanCallback` are abstract
+classes, and `java.lang.reflect.Proxy` only implements interfaces. So the android backend is
+Kotlin, in `android/dex/src/main/java/com/plugin/blec/`.
+
+To keep that an implementation detail rather than something every app has to wire up, the Kotlin
+is compiled to a single `classes.dex` that is committed as `src/android/classes.dex` and embedded
+with `include_bytes!`. At startup `blec` loads it with an `InMemoryDexClassLoader` and binds the
+callbacks with `RegisterNatives` (exported `Java_*` symbols never resolve for a dex-loaded class,
+because ART looks them up through the class' own loader). **An app using `blec` therefore needs no
+gradle module and no kotlin — only the permissions in its manifest.**
+
+Rebuild the dex after changing anything under `android/dex/src` and commit the result:
+
+```bash
+crates/blec/android/build-dex.sh   # needs ANDROID_HOME and a JDK 17+
+```
+
+The build shrinks the kotlin stdlib into the same dex with R8 and fails if the result spilled
+into a `classes2.dex`, which `InMemoryDexClassLoader(ByteBuffer, ClassLoader)` cannot load.
+
+Two things to know when using this:
+
+- **Dynamic code loading can be blocked.** Hardened builds (for example the GrapheneOS "dynamic
+  code loading" toggle) refuse `InMemoryDexClassLoader`. `blec::init()` then fails with
+  `Error::Android` explaining it.
+- **A main `Looper` must run.** `BluetoothLeScanner` and the gatt callbacks post to it. Any normal
+  android app has one; a headless process has to run one itself.
+
+Runtime permissions need an `Activity`, which nobody here owns. `blec` tracks the current one
+through `Application.ActivityLifecycleCallbacks`; a host that has an activity earlier can hand it
+over with `blec::android::set_activity` (`tauri-plugin-blec` does this through
+`wry::prelude::dispatch`). Permission results are picked up by re-checking the permissions when
+the activity is resumed again, since there is no `onRequestPermissionsResult` to hook into.
+
 ## License
 
 MIT or Apache-2.0, at your option.

@@ -1,5 +1,6 @@
+package com.plugin.blec
+
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -9,15 +10,13 @@ import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
+import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import app.tauri.plugin.Channel
-import app.tauri.plugin.Invoke
-import app.tauri.plugin.JSObject
-import com.plugin.blec.BleClientPlugin
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicInteger as AtomicInt
 import java.util.ArrayDeque
 import java.util.Base64
@@ -25,9 +24,9 @@ import java.util.UUID
 
 
 class Peripheral(
-    private val activity: Activity,
+    private val context: Context,
     private val device: BluetoothDevice,
-    private val plugin: BleClientPlugin
+    private val plugin: BlecPlugin
 ) {
     // Retry state for connect/discover
     private var connectAttempts = 0
@@ -132,7 +131,7 @@ class Peripheral(
 
     private fun sendEvent(event: Event) {
         val channel = this.plugin.eventChannel ?: return
-        val data = JSObject()
+        val data = JSONObject()
         if (event == Event.DeviceConnected) {
             data.put("DeviceConnected", this.device.address)
         } else if (event == Event.DeviceDisconnected) {
@@ -163,7 +162,7 @@ class Peripheral(
                 return@postDelayed
             }
             val stillConnected = try {
-                val manager = activity.getSystemService(BluetoothManager::class.java)
+                val manager = context.getSystemService(BluetoothManager::class.java)
                 manager?.getConnectionState(this.device, BluetoothProfile.GATT) == BluetoothProfile.STATE_CONNECTED
             } catch (e: Exception) {
                 Log.w("Peripheral", "Could not query the connection state after disconnect: ${e.message}")
@@ -177,7 +176,7 @@ class Peripheral(
                 "Disconnected from ${this.device.address} ${linkIdleTimeoutMs}ms ago, but the phone still has a GATT link to it: " +
                     "another BluetoothGatt client holds the connection, the device will not see a disconnect"
             )
-            val data = JSObject()
+            val data = JSONObject()
             data.put("LinkStillConnected", this.device.address)
             channel.send(data)
         }, linkIdleTimeoutMs)
@@ -295,7 +294,7 @@ class Peripheral(
         ) {
             this@Peripheral.notifyChannel?.let {
                 synchronized(it) {
-                    val notification = JSObject();
+                    val notification = JSONObject();
                     notification.put("uuid", characteristic.uuid)
                     notification.put("serviceUuid", characteristic.service.uuid)
                     notification.put("data", base64Encoder.encodeToString(value))
@@ -379,11 +378,11 @@ class Peripheral(
                 this@Peripheral.onReadInvoke.remove(key)
             }
             if (op == null) {
-                Log.e("Peripheral", "Did not find tauri invoke obj for read on $key")
+                Log.e("Peripheral", "Did not find the pending invoke for read on $key")
                 return
             }
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                val res = JSObject()
+                val res = JSONObject()
                 res.put("value", base64Encoder.encodeToString(value))
                 op.invoke.resolve(res)
                 return
@@ -416,7 +415,7 @@ class Peripheral(
             val op = this@Peripheral.onDescriptorInvoke
             this@Peripheral.onDescriptorInvoke = null
             if (op == null) {
-                Log.e("Peripheral", "Did not find tauri invoke obj for descriptor write")
+                Log.e("Peripheral", "Did not find the pending invoke for descriptor write")
                 return
             }
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -456,7 +455,7 @@ class Peripheral(
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 invoke?.reject("mtu change failed: $status")
             } else {
-                val res = JSObject()
+                val res = JSONObject()
                 res.put("mtu", mtu)
                 invoke?.resolve(res)
             }
@@ -510,7 +509,7 @@ class Peripheral(
         // operations (often surfacing as status 133).
         runOnMain {
             try {
-                this.pendingGatt = this.device.connectGatt(activity, false, this.callback, BluetoothDevice.TRANSPORT_LE)
+                this.pendingGatt = this.device.connectGatt(context, false, this.callback, BluetoothDevice.TRANSPORT_LE)
             } catch (e: Exception) {
                 Log.e("Peripheral", "Exception during connectGatt: ${e.message}")
                 this@Peripheral.onConnectionStateChange = null
@@ -672,8 +671,8 @@ class Peripheral(
         private val properties: Int,
         private val descriptors: List<String>
     ) {
-        fun toJson(): JSObject {
-            val ret = JSObject()
+        fun toJson(): JSONObject {
+            val ret = JSONObject()
             ret.put("uuid", uuid)
             ret.put("properties", properties)
             val descriptors = JSONArray()
@@ -690,8 +689,8 @@ class Peripheral(
         private val primary: Boolean,
         private val characs: List<ResCharacteristic>,
     ) {
-        fun toJson(): JSObject {
-            val ret = JSObject()
+        fun toJson(): JSONObject {
+            val ret = JSONObject()
             ret.put("uuid", uuid)
             ret.put("primary", primary)
             val characs = JSONArray()
@@ -724,7 +723,7 @@ class Peripheral(
                 ).toJson()
             )
         }
-        val res = JSObject()
+        val res = JSONObject()
         res.put("result", services)
         invoke.resolve(res)
     }
@@ -734,7 +733,7 @@ class Peripheral(
     }
 
     @SuppressLint("MissingPermission")
-    fun write(invoke: Invoke, args: BleClientPlugin.WriteParams) {
+    fun write(invoke: Invoke, args: WriteParams) {
         val key = Pair(args.characteristic!!, args.service!!)
         val charac = this.characteristics[key]
         if (charac == null) {
@@ -984,7 +983,7 @@ class Peripheral(
 
     @SuppressLint("MissingPermission")
     fun read(invoke: Invoke) {
-        val args = invoke.parseArgs(BleClientPlugin.ReadParams::class.java)
+        val args = ReadParams.from(invoke.args)
         val key = Pair(args.characteristic!!, args.service!!)
         val charac = this.characteristics[key]
         if (charac == null) {
@@ -1030,7 +1029,7 @@ class Peripheral(
 
     @SuppressLint("MissingPermission")
     fun subscribe(invoke: Invoke, enabled: Boolean) {
-        val args = invoke.parseArgs(BleClientPlugin.ReadParams::class.java)
+        val args = ReadParams.from(invoke.args)
         val charac = this.characteristics[Pair(args.characteristic!!, args.service!!)]
         if (charac == null) {
             invoke.reject("Characteristic ${args.characteristic} not found")

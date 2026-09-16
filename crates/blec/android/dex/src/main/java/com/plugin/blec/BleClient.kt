@@ -1,9 +1,6 @@
 package com.plugin.blec
 
-import Peripheral
-import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -15,25 +12,13 @@ import android.bluetooth.le.ScanFilter.Builder
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanResult.TX_POWER_NOT_PRESENT
 import android.bluetooth.le.ScanSettings
-import android.content.Context.MODE_PRIVATE
+import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
-import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.ParcelUuid
-import android.provider.Settings
-import android.util.Log
 import android.util.SparseArray
-import android.widget.Toast
-import androidx.core.app.ActivityCompat
-import androidx.core.app.ActivityCompat.startActivityForResult
-import androidx.core.content.ContextCompat.getSystemService
-import app.tauri.annotation.InvokeArg
-import app.tauri.plugin.Channel
-import app.tauri.plugin.Invoke
-import app.tauri.plugin.JSArray
-import app.tauri.plugin.JSObject
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Base64
 
 class BleDevice(
@@ -49,8 +34,8 @@ class BleDevice(
 ){
     private val base64Encoder: Base64.Encoder = Base64.getEncoder()
 
-    fun toJsObject():JSObject{
-        val obj = JSObject()
+    fun toJsObject():JSONObject{
+        val obj = JSONObject()
         obj.put("address",address)
         obj.put("id",address)
         obj.put("name",name)
@@ -60,7 +45,7 @@ class BleDevice(
         obj.put("txPowerLevel",txPowerLevel)
         // create Json Array from services
         val services = if (services != null) {
-            val arr = JSArray()
+            val arr = JSONArray()
             for (service in services){
                 arr.put(service)
             }
@@ -69,7 +54,7 @@ class BleDevice(
         obj.put("services",services)
         // crate object from sparse Array
         val manufacturerData = if (manufacturerData != null) {
-            val subObj = JSObject()
+            val subObj = JSONObject()
             for (i in 0 until manufacturerData.size()) {
                 val key = manufacturerData.keyAt(i)
                 // get the object by the key.
@@ -81,7 +66,7 @@ class BleDevice(
         obj.put("manufacturerData",manufacturerData)
         // crate object from serviceData
         val serviceData = if (serviceData != null) {
-            val subObj = JSObject()
+            val subObj = JSONObject()
             for ((key, value) in serviceData){
                 subObj.put(key.toString(),base64Encoder.encodeToString(value))
             }
@@ -92,22 +77,26 @@ class BleDevice(
     }
 }
 
-class BleClient(private val activity: Activity, private val plugin: BleClientPlugin) {
+class BleClient(private val context: Context, private val plugin: BlecPlugin) {
     private var scanner: BluetoothLeScanner? = null
     private var manager: BluetoothManager? = null
     private var scanCb: ScanCallback? = null
 
-    private fun markFirstPermissionRequest(perm: String) {
-        val sharedPreference: SharedPreferences =
-            activity.getSharedPreferences("PREFS_PERMISSION_FIRST_TIME_ASKING", MODE_PRIVATE)
-        sharedPreference.edit().putBoolean(perm, false).apply()
-    }
-
-    @InvokeArg
-    class ScanParams {
-        val services: ArrayList<String> = ArrayList()
-        val onDevice: Channel? = null
-        val allowIbeacons: Boolean = false
+    class ScanParams(
+        val services: List<String>,
+        val onDevice: Channel,
+        val allowIbeacons: Boolean,
+    ) {
+        companion object {
+            fun from(args: JSONObject): ScanParams {
+                val services = args.optJSONArray("services")
+                return ScanParams(
+                    List(services?.length() ?: 0) { services!!.getString(it) },
+                    Channel.from(args, "onDevice"),
+                    args.optBoolean("allowIbeacons", false),
+                )
+            }
+        }
     }
     @SuppressLint("MissingPermission")
     fun startScan(invoke: Invoke) {
@@ -116,18 +105,24 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
             invoke.reject("Scan already running")
             return
         }
-        val args = invoke.parseArgs(ScanParams::class.java)
+        val args = ScanParams.from(invoke.args)
 
         // get scanner
         if (scanner == null) {
-            manager = getSystemService(activity, BluetoothManager::class.java)
+            manager = context.getSystemService(BluetoothManager::class.java)
                 ?: throw RuntimeException("No bluetooth manager found")
             val bluetoothAdapter: BluetoothAdapter = manager!!.adapter
                 ?: throw RuntimeException("No bluetooth adapter available")
             // check if bluetooth is on
             if (!bluetoothAdapter.isEnabled ) {
                 val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                startActivityForResult(activity, enableBtIntent,0,null)
+                val activity = currentActivity
+                if (activity != null) {
+                    activity.startActivity(enableBtIntent)
+                } else {
+                    // Without an activity the intent needs its own task.
+                    context.startActivity(enableBtIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
             }
             scanner = bluetoothAdapter.bluetoothLeScanner
                 ?: throw RuntimeException("No bluetooth scanner available for adapter")
@@ -137,7 +132,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         this.plugin.devices.clear()
 
         var filters: ArrayList<ScanFilter?>? = null
-        if (args.services.size > 0) {
+        if (args.services.isNotEmpty()) {
             filters = ArrayList()
             for (uuid in args.services) {
                 filters.add(Builder().setServiceUuid(ParcelUuid.fromString(uuid)).build())
@@ -184,10 +179,10 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
                 // not know about the open BluetoothGatt and leak it.
                 val existing = this@BleClient.plugin.connected_devices[device.address]
                 this@BleClient.plugin.devices[device.address] = existing
-                    ?: Peripheral(this@BleClient.activity, result.device, this@BleClient.plugin)
-                val res = JSObject()
+                    ?: Peripheral(this@BleClient.context, result.device, this@BleClient.plugin)
+                val res = JSONObject()
                 res.put("result", device.toJsObject())
-                args.onDevice!!.send(res)
+                args.onDevice.send(res)
             }
             override fun onBatchScanResults(results: List<ScanResult>){
                 for(result in results){
@@ -225,9 +220,9 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
      */
     @SuppressLint("MissingPermission")
     fun retrievePeripheral(invoke: Invoke){
-        val args = invoke.parseArgs(ConnectParams::class.java)
+        val args = ConnectParams.from(invoke.args)
         if (manager == null) {
-            manager = getSystemService(activity, BluetoothManager::class.java)
+            manager = context.getSystemService(BluetoothManager::class.java)
         }
         val adapter = manager?.adapter
         if (adapter == null) {
@@ -243,7 +238,7 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         val existing = this.plugin.connected_devices[args.address]
             ?: this.plugin.devices[args.address]
         this.plugin.devices[args.address] = existing
-            ?: Peripheral(this.activity, remote, this.plugin)
+            ?: Peripheral(this.context, remote, this.plugin)
 
         var name = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             remote.alias
@@ -259,14 +254,14 @@ class BleClient(private val activity: Activity, private val plugin: BleClientPlu
         // No advertisement was received, so there is no rssi, manufacturer or
         // service data to report.
         val device = BleDevice(remote.address, name, 0, connected, bonded, null, null, null, null)
-        val res = JSObject()
+        val res = JSONObject()
         res.put("result", device.toJsObject())
         invoke.resolve(res)
     }
 
     fun adapterState(invoke: Invoke) {
-        val response = JSObject()
-        manager = getSystemService(activity, BluetoothManager::class.java)
+        val response = JSONObject()
+        manager = context.getSystemService(BluetoothManager::class.java)
         if (manager == null){
             response.put("result","unknown")
         } else {
