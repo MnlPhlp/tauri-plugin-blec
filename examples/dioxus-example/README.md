@@ -1,8 +1,12 @@
 # blec in a Dioxus app
 
-The same scan / connect / send / subscribe flow as
+The same scan / connect / write / read / subscribe flow as
 [`../plugin-blec-example`](../plugin-blec-example), but without tauri: this app uses the
 [`dioxus-blec`](../../crates/dioxus-blec) hooks on top of the [`blec`](../../crates/blec) crate.
+
+`src/main.rs` holds the BLE calls, `src/components.rs` the UI. Found devices are cards that unfold
+on a click to show what the advertisement carried (services, manufacturer and service data,
+signal strength).
 
 Run [`../test-server`](../test-server) on another machine to have something to talk to.
 
