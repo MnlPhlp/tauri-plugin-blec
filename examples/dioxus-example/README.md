@@ -20,7 +20,7 @@ dx serve --platform android
 
 Everything android needs is in this directory:
 
-- `Dioxus.toml` declares `min_sdk_version = 26` and the permissions, and points at
+- `Dioxus.toml` declares `min_sdk = 26` and the permissions, and points at
 - `android/AndroidManifest.xml` for the parts `[android.permissions]` cannot express — the
   `neverForLocation` flag on `BLUETOOTH_SCAN`, `maxSdkVersion` on the legacy `BLUETOOTH`
   permission, and the `bluetooth_le` feature.

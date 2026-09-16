@@ -5,12 +5,13 @@ name = "dioxus-blec-example"
 title = "blec"
 
 [android]
-min_sdk_version = 26
+min_sdk = 26
 # Merged into the generated manifest, for the parts the table below cannot
 # express (the `neverForLocation` flag on BLUETOOTH_SCAN).
 manifest = "android/AndroidManifest.xml"
 
+# `dx` requires a description on every raw permission entry.
 [android.permissions]
-"android.permission.BLUETOOTH_CONNECT" = {}
-"android.permission.BLUETOOTH_ADMIN" = {}
-"android.permission.ACCESS_FINE_LOCATION" = {}
+"android.permission.BLUETOOTH_CONNECT" = { description = "Connect to bluetooth devices" }
+"android.permission.BLUETOOTH_ADMIN" = { description = "Scan for bluetooth devices on android 11 and older" }
+"android.permission.ACCESS_FINE_LOCATION" = { description = "Required for bluetooth scanning on android 11 and older" }
