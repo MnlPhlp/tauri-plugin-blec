@@ -5,7 +5,7 @@
 
 mod bridge;
 
-pub use bridge::{init, set_activity};
+pub use bridge::{init, init_with, set_activity};
 
 use crate::ALLOW_IBEACONS;
 use async_trait::async_trait;

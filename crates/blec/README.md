@@ -61,8 +61,13 @@ crates/blec/android/build-dex.sh   # needs ANDROID_HOME and a JDK 17+
 The build shrinks the kotlin stdlib into the same dex with R8 and fails if the result spilled
 into a `classes2.dex`, which `InMemoryDexClassLoader(ByteBuffer, ClassLoader)` cannot load.
 
-Two things to know when using this:
+Three things to know when using this:
 
+- **`blec` needs a `JavaVM` and a `Context`.** `blec::init()` takes both from
+  [`ndk-context`](https://crates.io/crates/ndk-context), which Dioxus initializes but Tauri
+  (tao 0.35) does not. A host without `ndk-context` calls
+  `blec::android::init_with(env, context)` first, from any thread with a `JNIEnv`;
+  `tauri-plugin-blec` does that from `wry::prelude::dispatch` once the app is ready.
 - **Dynamic code loading can be blocked.** Hardened builds (for example the GrapheneOS "dynamic
   code loading" toggle) refuse `InMemoryDexClassLoader`. `blec::init()` then fails with
   `Error::Android` explaining it.

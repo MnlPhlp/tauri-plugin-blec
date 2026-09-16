@@ -73,10 +73,15 @@ fn bridge() -> Result<&'static Bridge, Error> {
 }
 
 /// Loads the embedded dex, binds the native callbacks and hands the Kotlin side
-/// the android `Context`.
+/// the android `Context`, taking both the `JavaVM` and the `Context` from
+/// [`ndk-context`](ndk_context).
 ///
 /// Idempotent: every call after the first one is a no-op. [`crate::init`] calls
 /// this, so an app normally does not have to.
+///
+/// Not every host sets `ndk-context` up: Dioxus does, Tauri (tao 0.35) does not.
+/// A host that has a `JNIEnv` and a `Context` of its own, but no `ndk-context`,
+/// calls [`init_with`] instead before [`crate::init`].
 ///
 /// # Errors
 /// Returns an error if there is no android context (the host has not set up
@@ -86,10 +91,18 @@ pub fn init() -> Result<(), Error> {
     if BRIDGE.get().is_some() {
         return Ok(());
     }
-    let ctx = ndk_context::android_context();
+    // ndk-context has no way to ask whether it was initialized: `android_context`
+    // panics if not. Turn that into an error that says what to do instead.
+    let ctx = std::panic::catch_unwind(ndk_context::android_context).map_err(|_| {
+        Error::Android(
+            "no android context available: the host did not initialize ndk-context. \
+             Call blec::android::init_with with a JNIEnv and a Context before blec::init"
+                .to_string(),
+        )
+    })?;
     if ctx.vm().is_null() || ctx.context().is_null() {
         return Err(Error::Android(
-            "no android context available: the host did not initialize ndk-context".to_string(),
+            "no android context available: ndk-context holds null pointers".to_string(),
         ));
     }
     // SAFETY: ndk-context hands out the JavaVM the host stored for this process,
@@ -101,33 +114,88 @@ pub fn init() -> Result<(), Error> {
         // SAFETY: the context is a global reference owned by the host and
         // outlives this local frame.
         let context = unsafe { JObject::from_raw(env, raw_context) };
-        let loader = load_dex(env, &context)?;
-        let class = LoaderContext::Loader(&loader)
-            .load_class(env, jni_str!("com.plugin.blec.Bridge"), true)
-            .map_err(|e| {
-                Error::Android(format!("{BRIDGE_CLASS} missing from the embedded dex: {e}"))
-            })?;
-        // `Java_*` symbols exported by this library are never found for a
-        // dex-loaded class: ART resolves them through the class' own loader.
-        // Binding them explicitly is the only option.
-        //
-        // SAFETY: all three are static methods whose rust implementations are
-        // generated from the same signatures by `native_method!`.
-        unsafe {
-            env.register_native_methods(
-                &class,
-                &[NATIVE_RESOLVE, NATIVE_REJECT, NATIVE_CHANNEL_SEND],
-            )?;
-        }
-        env.call_static_method(
-            &class,
-            jni_str!("init"),
-            jni_sig!((ctx: android.content.Context) -> void),
-            &[(&context).into()],
-        )?;
-        Ok(env.new_global_ref(&class)?)
+        load_bridge(env, &context)
     })?;
+    store_bridge(vm, class);
+    Ok(())
+}
 
+/// Like [`init`], but with the `JavaVM` and `Context` coming from the caller
+/// instead of `ndk-context`.
+///
+/// For hosts that never initialize `ndk-context`. Tauri is one: tao runs the
+/// app on its own thread and drops the JNI arguments it was started with, so
+/// `tauri-plugin-blec` calls this from `wry::prelude::dispatch`, which runs on
+/// the main thread with the `Activity` at hand. Any `Context` works; when it is
+/// an `Activity`, the Kotlin side also uses it for the runtime permission
+/// prompts, so [`set_activity`] is not needed on top.
+///
+/// Idempotent: every call after the first one is a no-op, including a later
+/// [`init`]. Must be called before [`crate::init`], which otherwise falls back
+/// to `ndk-context`.
+///
+/// # Errors
+/// Returns an error if loading the dex fails, see [`init`].
+///
+/// # Safety
+/// `env` must be a valid `JNIEnv` pointer for the calling thread and `context`
+/// a valid reference to an `android.content.Context` in the current frame.
+pub unsafe fn init_with(env: *mut jni::sys::JNIEnv, context: jobject) -> Result<(), Error> {
+    if BRIDGE.get().is_some() {
+        return Ok(());
+    }
+    // SAFETY: the caller guarantees `env` belongs to this thread and is at the
+    // top of its frame stack.
+    let mut unowned = unsafe { EnvUnowned::from_raw(env) };
+    let outcome = unowned
+        .with_env(|env| -> Result<(JavaVM, Global<JClass<'static>>), Error> {
+            let vm = env.get_java_vm()?;
+            // SAFETY: the caller guarantees the reference is valid for this frame.
+            let context = unsafe { JObject::from_raw(env, context) };
+            let class = load_bridge(env, &context)?;
+            Ok((vm, class))
+        })
+        .into_outcome();
+    let (vm, class) = match outcome {
+        Outcome::Ok(ok) => ok,
+        Outcome::Err(e) => return Err(e),
+        Outcome::Panic(_) => return Err(Error::Android("init_with panicked".to_string())),
+    };
+    store_bridge(vm, class);
+    Ok(())
+}
+
+/// Loads the dex, binds the natives and runs `Bridge.init(context)`. Shared by
+/// [`init`] and [`init_with`], which only differ in where the env comes from.
+fn load_bridge(env: &mut Env<'_>, context: &JObject<'_>) -> Result<Global<JClass<'static>>, Error> {
+    let loader = load_dex(env, context)?;
+    let class = LoaderContext::Loader(&loader)
+        .load_class(env, jni_str!("com.plugin.blec.Bridge"), true)
+        .map_err(|e| {
+            Error::Android(format!("{BRIDGE_CLASS} missing from the embedded dex: {e}"))
+        })?;
+    // `Java_*` symbols exported by this library are never found for a
+    // dex-loaded class: ART resolves them through the class' own loader.
+    // Binding them explicitly is the only option.
+    //
+    // SAFETY: all three are static methods whose rust implementations are
+    // generated from the same signatures by `native_method!`.
+    unsafe {
+        env.register_native_methods(
+            &class,
+            &[NATIVE_RESOLVE, NATIVE_REJECT, NATIVE_CHANNEL_SEND],
+        )?;
+    }
+    env.call_static_method(
+        &class,
+        jni_str!("init"),
+        jni_sig!((ctx: android.content.Context) -> void),
+        &[context.into()],
+    )?;
+    Ok(env.new_global_ref(&class)?)
+}
+
+fn store_bridge(vm: JavaVM, class: Global<JClass<'static>>) {
     let _ = BRIDGE.set(Bridge {
         vm,
         class,
@@ -136,7 +204,6 @@ pub fn init() -> Result<(), Error> {
         next_id: AtomicU64::new(1),
     });
     debug!("android bridge initialized");
-    Ok(())
 }
 
 fn load_dex<'local>(

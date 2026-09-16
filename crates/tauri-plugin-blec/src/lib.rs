@@ -23,29 +23,23 @@ pub use blec::{
 
 /// Builds the plugin, initializing the BLE handler.
 ///
+/// On Android the handler is initialized once the app is `Ready` instead, see
+/// [`init_android`]. Until then the commands answer with
+/// [`Error::HandlerNotInitialized`].
+///
 /// # Errors
 /// Returns an error if the handler cannot be initialized.
 pub fn try_init() -> Result<TauriPlugin<Wry>> {
+    #[cfg(not(target_os = "android"))]
     async_runtime::block_on(blec::init())?;
 
     #[allow(unused)]
     let plugin = Builder::new("blec")
         .invoke_handler(commands::commands())
         .on_event(|_app, event| {
-            // The kotlin side needs an Activity to request the runtime
-            // permissions from, and only the host knows one. Wait for `Ready`:
-            // before that there is no activity for wry to dispatch to.
             #[cfg(target_os = "android")]
             if matches!(event, tauri::RunEvent::Ready) {
-                tauri::wry::prelude::dispatch(|env, activity, _webview| {
-                    // SAFETY: wry calls this on the android main thread with its
-                    // own JNIEnv and the activity alive for the call.
-                    if let Err(e) = unsafe {
-                        blec::android::set_activity(env.get_raw().cast(), activity.as_raw().cast())
-                    } {
-                        tracing::error!("could not hand the activity to blec: {e}");
-                    }
-                });
+                init_android();
             }
             // Leaving a GATT link open past the end of the process keeps the
             // peripheral "connected" until it times out on its own, during
@@ -71,4 +65,32 @@ pub fn try_init() -> Result<TauriPlugin<Wry>> {
 #[must_use]
 pub fn init() -> TauriPlugin<Wry> {
     try_init().expect("failed to initialize plugin")
+}
+
+/// Initializes `blec` on Android, from the main thread with the `Activity`.
+///
+/// Tauri never sets up `ndk-context`, which `blec::init()` would otherwise
+/// take the `JavaVM` and `Context` from: tao runs the app on a thread of its
+/// own and discards the JNI arguments it was started with. The only way to a
+/// `JNIEnv` is `wry::prelude::dispatch`, and the first moment it has an
+/// activity to dispatch to is `RunEvent::Ready`. The closure runs on the
+/// android main thread, which also handles the IPC, so blocking on the (quick)
+/// handler setup there means no command can observe a half-initialized state.
+#[cfg(target_os = "android")]
+fn init_android() {
+    tauri::wry::prelude::dispatch(|env, activity, _webview| {
+        // SAFETY: wry calls this on the android main thread with its own JNIEnv
+        // and the activity alive for the call. The activity is the `Context`
+        // handed to the kotlin side, which also takes it as the one to request
+        // runtime permissions from.
+        let bridge =
+            unsafe { blec::android::init_with(env.get_raw().cast(), activity.as_raw().cast()) };
+        if let Err(e) = bridge {
+            tracing::error!("could not initialize the blec android bridge: {e}");
+            return;
+        }
+        if let Err(e) = async_runtime::block_on(blec::init()) {
+            tracing::error!("could not initialize blec: {e}");
+        }
+    });
 }
