@@ -20,5 +20,5 @@ tauri-build = { version = "2.0.0", features = [] }
 [dependencies]
 tauri = { version = "2.0.0", features = [] }
 
-tauri-plugin-blec = { path = "../../.." }
+tauri-plugin-blec = { path = "../../../crates/tauri-plugin-blec" }
 tauri-plugin-log = "2"

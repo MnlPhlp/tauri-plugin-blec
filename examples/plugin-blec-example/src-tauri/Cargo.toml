@@ -25,5 +25,5 @@ serde_json = "1"
 tracing = { version = "0.1.40", features = ["log"] }
 uuid = "1"
 
-tauri-plugin-blec = { path = "../../../" }
+tauri-plugin-blec = { path = "../../../crates/tauri-plugin-blec" }
 tauri-plugin-log = "2"

@@ -1,0 +1,42 @@
+[package]
+name = "tauri-plugin-blec"
+version = "0.15.0"
+description = "BLE-Client plugin for Tauri"
+readme = "README.md"
+exclude = ["/node_modules", "/.yarn"]
+links = "tauri-plugin-blec"
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+blec = { version = "0.15.0", path = "../blec" }
+tauri = { version = "2.0.6", features = ["wry"] }
+serde.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+
+[features]
+# Replaces the platform BLE backend with an in-process mock (see `tauri_plugin_blec::mock`).
+# Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
+mock = ["blec/mock"]
+
+[build-dependencies]
+tauri-plugin = { version = "2.0.1", features = ["build"] }
+tauri-build = "2.0.1"
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs"]
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-linux-android",
+  "x86_64-apple-ios",
+]

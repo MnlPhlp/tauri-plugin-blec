@@ -5,7 +5,7 @@ on:
     push:
         branches: ["main"]
         paths:
-            - "guest-js/**"
+            - "crates/tauri-plugin-blec/guest-js/**"
 
     # Allows you to run this workflow manually from the Actions tab
     workflow_dispatch:
@@ -33,12 +33,13 @@ jobs:
               uses: actions/setup-node@v4
             - name: Build Docs
               run: yarn && yarn typedoc
+              working-directory: crates/tauri-plugin-blec
             - name: Setup Pages
               uses: actions/configure-pages@v5
             - name: Upload artifact
               uses: actions/upload-pages-artifact@v3
               with:
-                  path: docs/
+                  path: crates/tauri-plugin-blec/docs/
 
     # Deployment job
     deploy:

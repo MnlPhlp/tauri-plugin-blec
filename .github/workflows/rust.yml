@@ -21,10 +21,10 @@ jobs:
     - name: install rust android target
       run: rustup target add aarch64-linux-android
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --workspace --verbose
     - name: check mock feature
-      run: cargo check --features mock
+      run: cargo check --workspace --features tauri-plugin-blec/mock
     - name: check android
-      run: cargo check --target aarch64-linux-android
+      run: cargo check --workspace --target aarch64-linux-android

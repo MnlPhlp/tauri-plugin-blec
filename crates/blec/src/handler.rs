@@ -313,16 +313,15 @@ impl Handler {
     /// Takes a sender that will be used to send changes in the scanning status
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
     /// use tokio::sync::mpsc;
-    /// async_runtime::block_on(async {
-    ///     let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
     ///     let (tx, mut rx) = mpsc::channel(1);
     ///     handler.set_scanning_update_channel(tx).await;
     ///     while let Some(scanning) = rx.recv().await {
     ///         println!("Scanning: {scanning}");
     ///     }
-    /// });
+    /// # }
     /// ```
     pub async fn set_scanning_update_channel(&self, tx: mpsc::Sender<bool>) {
         self.state.lock().await.scan_update_channel.push(tx);
@@ -331,16 +330,15 @@ impl Handler {
     /// Takes a sender that will be used to send changes in the connection status
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
     /// use tokio::sync::mpsc;
-    /// async_runtime::block_on(async {
-    ///     let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
     ///     let (tx, mut rx) = mpsc::channel(1);
     ///     handler.set_connection_update_channel(tx).await;
     ///     while let Some(connected) = rx.recv().await {
     ///         println!("Connected: {connected}");
     ///     }
-    /// });
+    /// # }
     /// ```
     pub async fn set_connection_update_channel(&self, tx: mpsc::Sender<bool>) {
         self.state.lock().await.connection_update_channel.push(tx);
@@ -355,12 +353,11 @@ impl Handler {
     /// if the connection fails, or if the service/characteristics discovery fails
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
-    /// use tauri_plugin_blec::OnDisconnectHandler;
-    /// async_runtime::block_on(async {
-    ///    let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// use blec::OnDisconnectHandler;
+    /// # async fn example() {
+    ///    let handler = blec::get_handler().unwrap();
     ///    handler.connect("00:00:00:00:00:00", OnDisconnectHandler::from_sync(|| println!("disconnected")), false).await.unwrap();
-    /// });
+    /// # }
     /// ```
     pub async fn connect(
         &'static self,
@@ -727,18 +724,17 @@ impl Handler {
     /// Panics if there is an error getting devices from the adapter
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
     /// use tokio::sync::mpsc;
-    /// use tauri_plugin_blec::models::ScanFilter;
+    /// use blec::models::ScanFilter;
     ///
-    /// async_runtime::block_on(async {
-    ///     let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
     ///     let (tx, mut rx) = mpsc::channel(1);
     ///     handler.discover(Some(tx),1000, ScanFilter::None, false).await.unwrap();
     ///     while let Some(devices) = rx.recv().await {
     ///         println!("Discovered {devices:?}");
     ///     }
-    /// });
+    /// # }
     /// ```
     pub async fn discover(
         &'static self,
@@ -901,16 +897,15 @@ impl Handler {
     /// or if the write operation fails
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
     /// use uuid::{Uuid,uuid};
-    /// use tauri_plugin_blec::models::WriteType;
+    /// use blec::models::WriteType;
     ///
     /// const CHARACTERISTIC_UUID: Uuid = uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B");
-    /// async_runtime::block_on(async {
-    ///     let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
     ///     let data = [1,2,3,4,5];
     ///     let response = handler.send_data(CHARACTERISTIC_UUID, None, &data, WriteType::WithResponse).await.unwrap();
-    /// });
+    /// # }
     /// ```
     pub async fn send_data(
         &self,
@@ -957,13 +952,12 @@ impl Handler {
     /// or if the read operation fails
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
     /// use uuid::{Uuid,uuid};
     /// const CHARACTERISTIC_UUID: Uuid = uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B");
-    /// async_runtime::block_on(async {
-    ///     let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
     ///     let response = handler.recv_data(CHARACTERISTIC_UUID, None).await.unwrap();
-    /// });
+    /// # }
     /// ```
     pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
         let _gatt_guard = self.gatt_op_lock.lock().await;
@@ -998,13 +992,12 @@ impl Handler {
     /// or if the subscribe operation fails
     /// # Example
     /// ```no_run
-    /// use tauri::async_runtime;
     /// use uuid::{Uuid,uuid};
     /// const CHARACTERISTIC_UUID: Uuid = uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B");
-    /// async_runtime::block_on(async {
-    ///     let handler = tauri_plugin_blec::get_handler().unwrap();
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
     ///     let response = handler.subscribe(CHARACTERISTIC_UUID, None, |data| println!("received {data:?}")).await.unwrap();
-    /// });
+    /// # }
     /// ```
     pub async fn subscribe(
         &self,

@@ -7,7 +7,7 @@
 //! send notifications, power the adapter off.
 //!
 //! ```no_run
-//! use tauri_plugin_blec::mock::{DeviceSpec, MockWorld, ServiceSpec};
+//! use blec::mock::{DeviceSpec, MockWorld, ServiceSpec};
 //! use btleplug::api::CharPropFlags;
 //! use uuid::uuid;
 //!

@@ -4,9 +4,9 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::error::Result;
-use crate::models::{AdapterState, BleDevice, ScanFilter, Service, TimeoutsMs, WriteType};
-use crate::{get_handler, OnDisconnectHandler};
+use blec::models::{AdapterState, BleDevice, ScanFilter, Service, TimeoutsMs, WriteType};
+use blec::Result;
+use blec::{get_handler, OnDisconnectHandler};
 
 #[command]
 pub(crate) async fn scan<R: Runtime>(
@@ -234,7 +234,7 @@ pub(crate) fn check_permissions(
     _app: AppHandle<impl Runtime>,
     ask_if_denied: bool,
 ) -> Result<bool> {
-    crate::check_permissions(ask_if_denied)
+    blec::check_permissions(ask_if_denied)
 }
 
 #[command]
@@ -285,7 +285,7 @@ pub(crate) fn set_timeouts<R: Runtime>(_app: AppHandle<R>, timeouts: TimeoutsMs)
 #[cfg(target_os = "android")]
 #[command]
 pub(crate) fn set_android_mtu<R: Runtime>(_app: AppHandle<R>, mtu: u16) -> Result<()> {
-    crate::handler::Handler::set_android_mtu_request(mtu);
+    blec::Handler::set_android_mtu_request(mtu);
     Ok(())
 }
 
