@@ -10,7 +10,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@mnlphlp/plugin-blec": "file:../..",
+    "@mnlphlp/plugin-blec": "file:../../crates/tauri-plugin-blec",
     "@tauri-apps/api": ">=2.0.0",
     "@tauri-apps/plugin-log": "~2",
     "vue": "^3.3.4"
