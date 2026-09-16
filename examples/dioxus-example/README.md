@@ -22,12 +22,15 @@ dx serve --platform android --device
 emulator (`x86_64`) even when no emulator is running, and the install fails on an arm64 phone with
 `INSTALL_FAILED_NO_MATCHING_ABIS`.
 
-Everything android needs is in this directory:
+Everything android needs is in `Dioxus.toml`: `min_sdk = 26`, the `bluetooth_le` feature and the
+permissions. `[android.permissions]` cannot express permission attributes, so the
+`neverForLocation` flag on `BLUETOOTH_SCAN` and `maxSdkVersion` on the legacy `BLUETOOTH`
+permission are raw XML in `[android.raw] manifest`, which `dx` pastes into the generated
+manifest.
 
-- `Dioxus.toml` declares `min_sdk = 26` and the permissions, and points at
-- `android/AndroidManifest.xml` for the parts `[android.permissions]` cannot express — the
-  `neverForLocation` flag on `BLUETOOTH_SCAN`, `maxSdkVersion` on the legacy `BLUETOOTH`
-  permission, and the `bluetooth_le` feature.
+Do not use `[android] manifest = "<file>"` for this: `dx` 0.7 parses the key but never reads the
+file. A permission that only lives there is missing from the app, and android then reports it as
+denied although the settings show "Nearby devices" as granted.
 
 There is no gradle module and no kotlin: `blec::init()` loads the android implementation from a
 dex embedded in the crate. See [Android internals](../../crates/blec/README.md#android-internals).

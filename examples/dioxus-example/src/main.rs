@@ -3,7 +3,7 @@
 //! Scans, connects, and reads/writes/subscribes on the characteristic
 //! `examples/test-server` serves. On android this is all the app does about
 //! bluetooth: `blec::init()` loads the embedded dex, and the permissions come
-//! from `Dioxus.toml` and `android/AndroidManifest.xml`.
+//! from `Dioxus.toml`.
 
 use blec::models::{BleDevice, ScanFilter, WriteType};
 use blec::OnDisconnectHandler;

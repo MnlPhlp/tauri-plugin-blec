@@ -125,7 +125,9 @@ in the wild: panic without SDK (Slint/robius, breaks `cargo check` downstream), 
 
   [android]
   min_sdk = 26
-  manifest = "android/AndroidManifest.xml"           # merged
+  manifest = "android/AndroidManifest.xml"           # documented as "merged", but dead: parsed and never read (0.7.9, 0.7.10, main as of 2026-09-16)
+  [android.raw]
+  manifest = """<uses-permission ... />"""            # the working way: pasted into the generated manifest after the permissions
   gradle_dependencies = ["..."]
   gradle_plugins = [...]
   proguard_rules = [...]
