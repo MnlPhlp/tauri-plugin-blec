@@ -6,13 +6,8 @@ pluginManagement {
     }
     resolutionStrategy {
         eachPlugin {
-            switch (requested.id.id) {
-                case "com.android.library":
-                    useVersion("8.0.2")
-                    break
-                case "org.jetbrains.kotlin.android":
-                    useVersion("1.8.20")
-                    break
+            if (requested.id.id == "com.android.library") {
+                useVersion("8.0.2")
             }
         }
     }
@@ -23,9 +18,5 @@ dependencyResolutionManagement {
     repositories {
         mavenCentral()
         google()
-
     }
 }
-
-include ':tauri-android'
-project(':tauri-android').projectDir = new File('./.tauri/tauri-api')

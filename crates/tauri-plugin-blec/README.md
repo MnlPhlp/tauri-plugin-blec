@@ -26,7 +26,7 @@ Or manually add it to the `src-tauri/Cargo.toml`
 
 ```toml
 [dependencies]
-tauri-plugin-blec = "0.12"
+tauri-plugin-blec = "0.15"
 ```
 
 ### Install the js bindings
@@ -71,6 +71,17 @@ Add `blec:default` to the permissions in your capabilities file.
 
 [Explanation about capabilities](https://v2.tauri.app/security/capabilities/)
 
+### Android Setup
+
+Nothing to do. The plugin's android module only merges the bluetooth permissions into your
+manifest; the android implementation itself is a dex embedded in the `blec` crate and loaded at
+runtime, so there is no gradle module to add and no kotlin to build. See
+[Android internals](../blec/README.md#android-internals) for how that works and its two caveats
+(hardened builds that block dynamic code loading, and the main `Looper` requirement).
+
+Call `checkPermissions(true)` from the frontend (or `blec::check_permissions(true)` from rust)
+before scanning; it asks the user and, if they denied before, sends them to the app settings.
+
 ### IOS Setup
 
 Add an entry to the info.plist of your app:
@@ -85,6 +96,16 @@ Add the CoreBluetooth Framework in your xcode procjet:
 - open with `tauri ios dev --open`
 - click on your project to open settings
 - Add Framework under General -> Frameworks,Libraries and Embedded Content
+
+## Upgrading to 0.15
+
+The crate was split: the BLE client now lives in [`blec`](../blec) and this crate is a thin tauri
+layer over it, re-exporting the whole rust API. Existing code keeps working, with two exceptions:
+
+- `check_permissions` is `async` now (it waits for the user). The JavaScript API is unchanged.
+- `Error::PluginInvoke` is gone; android failures are `Error::Android(String)`.
+
+In a non-tauri rust app, depend on `blec` directly instead.
 
 ## Usage in Frontend
 
@@ -114,7 +135,7 @@ or hang operations, and send notifications. The handler tests in `crates/blec/sr
 plugin through those situations, including a seeded randomized stress test.
 
 ```bash
-cargo test
+cargo test --workspace
 # with the handler's logs
 RUST_LOG=trace cargo test -- --nocapture
 # longer randomized run, reproducible via the seed
