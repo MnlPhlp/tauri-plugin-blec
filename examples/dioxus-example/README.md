@@ -15,8 +15,12 @@ dx serve
 ## Android
 
 ```bash
-dx serve --platform android
+dx serve --platform android --device
 ```
+
+`--device` makes `dx` build for the phone attached over `adb`. Without it `dx` builds for the
+emulator (`x86_64`) even when no emulator is running, and the install fails on an arm64 phone with
+`INSTALL_FAILED_NO_MATCHING_ABIS`.
 
 Everything android needs is in this directory:
 
