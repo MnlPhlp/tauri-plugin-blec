@@ -1,11 +1,18 @@
 //! The JNI bridge between this crate and its Kotlin side.
 //!
-//! The Kotlin code lives in `crates/blec/android/` and is compiled to a single
-//! `classes.dex` that is committed next to this file and embedded in the
-//! binary. At startup [`init`] loads it with an [`InMemoryDexClassLoader`],
-//! binds the three native methods the Kotlin side calls back through, and hands
-//! it the android `Context`. Consumers therefore need no gradle module, only the
-//! manifest permissions.
+//! The Kotlin code lives in `crates/blec/android/lib`, an ordinary android
+//! library module. The hosts this crate ships for build it into the app like
+//! any other module (`tauri-plugin-blec` and `dioxus-blec` point their build
+//! systems at that directory), so at startup [`init`] finds
+//! `com.plugin.blec.Bridge` in the app's own class loader, binds the three
+//! native methods the Kotlin side calls back through, and hands it the android
+//! `Context`.
+//!
+//! For hosts without a gradle build the `embedded-dex` cargo feature embeds the
+//! same code as a prebuilt `classes.dex`, committed next to this file, and loads
+//! it with an [`InMemoryDexClassLoader`] when the class is not in the app.
+//! That is dynamic code loading, which hardened android builds can block per
+//! app, so it is only the fallback.
 //!
 //! [`InMemoryDexClassLoader`]: https://developer.android.com/reference/dalvik/system/InMemoryDexClassLoader
 //!
@@ -45,8 +52,10 @@ use tracing::{debug, error, trace, warn};
 
 use crate::error::Error;
 
-/// The compiled Kotlin side. Rebuild with `crates/blec/android/build-dex.sh`
-/// after changing anything under `crates/blec/android/src`.
+/// The compiled Kotlin side, for hosts that do not build `android/lib` into
+/// the app. Rebuild with `crates/blec/android/build-dex.sh` after changing
+/// anything under `crates/blec/android/lib/src`.
+#[cfg(feature = "embedded-dex")]
 const CLASSES_DEX: &[u8] = include_bytes!("classes.dex");
 
 const BRIDGE_CLASS: &str = "com.plugin.blec.Bridge";
@@ -72,9 +81,15 @@ fn bridge() -> Result<&'static Bridge, Error> {
         .ok_or_else(|| Error::Android("android bridge not initialized".to_string()))
 }
 
-/// Loads the embedded dex, binds the native callbacks and hands the Kotlin side
-/// the android `Context`, taking both the `JavaVM` and the `Context` from
+/// Loads the Kotlin side, binds the native callbacks and hands it the android
+/// `Context`, taking both the `JavaVM` and the `Context` from
 /// [`ndk-context`](ndk_context).
+///
+/// The Kotlin classes are looked up in the app's class loader, where the
+/// android module in `crates/blec/android/lib` puts them when it is part of the
+/// app's build (it is for `tauri-plugin-blec` and `dioxus-blec`). With the
+/// `embedded-dex` feature, an app that does not have them falls back to the dex
+/// embedded in this crate.
 ///
 /// Idempotent: every call after the first one is a no-op. [`crate::init`] calls
 /// this, so an app normally does not have to.
@@ -85,8 +100,9 @@ fn bridge() -> Result<&'static Bridge, Error> {
 ///
 /// # Errors
 /// Returns an error if there is no android context (the host has not set up
-/// `ndk-context`), or if loading the dex fails. The latter happens on hardened
-/// android builds where dynamic code loading is switched off for the app.
+/// `ndk-context`), if the Kotlin classes are neither in the app nor embedded,
+/// or if loading the embedded dex fails. The latter happens on hardened android
+/// builds where dynamic code loading is switched off for the app.
 pub fn init() -> Result<(), Error> {
     if BRIDGE.get().is_some() {
         return Ok(());
@@ -135,7 +151,7 @@ pub fn init() -> Result<(), Error> {
 /// to `ndk-context`.
 ///
 /// # Errors
-/// Returns an error if loading the dex fails, see [`init`].
+/// Returns an error if the Kotlin side cannot be loaded, see [`init`].
 ///
 /// # Safety
 /// `env` must be a valid `JNIEnv` pointer for the calling thread and `context`
@@ -165,18 +181,15 @@ pub unsafe fn init_with(env: *mut jni::sys::JNIEnv, context: jobject) -> Result<
     Ok(())
 }
 
-/// Loads the dex, binds the natives and runs `Bridge.init(context)`. Shared by
-/// [`init`] and [`init_with`], which only differ in where the env comes from.
+/// Finds the `Bridge` class, binds the natives and runs `Bridge.init(context)`.
+/// Shared by [`init`] and [`init_with`], which only differ in where the env
+/// comes from.
 fn load_bridge(env: &mut Env<'_>, context: &JObject<'_>) -> Result<Global<JClass<'static>>, Error> {
-    let loader = load_dex(env)?;
-    let class = LoaderContext::Loader(&loader)
-        .load_class(env, jni_str!("com.plugin.blec.Bridge"), true)
-        .map_err(|e| {
-            Error::Android(format!("{BRIDGE_CLASS} missing from the embedded dex: {e}"))
-        })?;
-    // `Java_*` symbols exported by this library are never found for a
-    // dex-loaded class: ART resolves them through the class' own loader.
-    // Binding them explicitly is the only option.
+    let class = load_bridge_class(env, context)?;
+    // `Java_*` symbols exported by this library are only found when the class
+    // was loaded by the same loader as the library, which holds for the app
+    // module but never for the dex, and ART resolves them lazily on the first
+    // call either way. Binding them explicitly works in both cases.
     //
     // SAFETY: all three are static methods whose rust implementations are
     // generated from the same signatures by `native_method!`.
@@ -193,6 +206,66 @@ fn load_bridge(env: &mut Env<'_>, context: &JObject<'_>) -> Result<Global<JClass
         &[context.into()],
     )?;
     Ok(env.new_global_ref(&class)?)
+}
+
+/// The `Bridge` class from the app's class loader, or from the embedded dex
+/// when the app does not have it and the `embedded-dex` feature is on.
+///
+/// The app's loader comes first so that an app which builds the android
+/// module never loads code at runtime, whatever features got unified into
+/// `blec`.
+fn load_bridge_class<'local>(
+    env: &mut Env<'local>,
+    context: &JObject<'_>,
+) -> Result<JClass<'local>, Error> {
+    let app_loader = app_class_loader(env, context)?;
+    // A native thread's `FindClass` only sees the system loader, so go through
+    // the app's loader explicitly.
+    match LoaderContext::Loader(&app_loader).load_class(
+        env,
+        jni_str!("com.plugin.blec.Bridge"),
+        true,
+    ) {
+        Ok(class) => Ok(class),
+        Err(jni::errors::Error::NoClassDefFound { .. }) => load_embedded_bridge_class(env),
+        Err(e) => Err(Error::Android(format!(
+            "could not load {BRIDGE_CLASS}: {e}"
+        ))),
+    }
+}
+
+/// The class loader that loaded the app, which is where a gradle module ends up.
+fn app_class_loader<'local>(
+    env: &mut Env<'local>,
+    context: &JObject<'_>,
+) -> Result<JClassLoader<'local>, Error> {
+    let loader = env
+        .call_method(
+            context,
+            jni_str!("getClassLoader"),
+            jni_sig!(() -> java.lang.ClassLoader),
+            &[],
+        )?
+        .l()?;
+    Ok(env.cast_local::<JClassLoader>(loader)?)
+}
+
+#[cfg(feature = "embedded-dex")]
+fn load_embedded_bridge_class<'local>(env: &mut Env<'local>) -> Result<JClass<'local>, Error> {
+    tracing::info!("{BRIDGE_CLASS} is not in the app, loading the embedded dex instead");
+    let loader = load_dex(env)?;
+    LoaderContext::Loader(&loader)
+        .load_class(env, jni_str!("com.plugin.blec.Bridge"), true)
+        .map_err(|e| Error::Android(format!("{BRIDGE_CLASS} missing from the embedded dex: {e}")))
+}
+
+#[cfg(not(feature = "embedded-dex"))]
+fn load_embedded_bridge_class<'local>(_env: &mut Env<'local>) -> Result<JClass<'local>, Error> {
+    Err(Error::Android(format!(
+        "{BRIDGE_CLASS} is not in the app: its android module was not built into it. \
+         Use tauri-plugin-blec or dioxus-blec, add crates/blec/android/lib to the app's gradle \
+         build, or enable the `embedded-dex` feature of blec"
+    )))
 }
 
 fn store_bridge(vm: JavaVM, class: Global<JClass<'static>>) {
@@ -218,6 +291,7 @@ fn store_bridge(vm: JavaVM, class: Global<JClass<'static>>) {
 /// `NoSuchMethodError`. The Kotlin side only references the android framework,
 /// `java.*`, `org.json` and its own shrunk stdlib, so it needs nothing from the
 /// app loader.
+#[cfg(feature = "embedded-dex")]
 fn load_dex<'local>(env: &mut Env<'local>) -> Result<JClassLoader<'local>, Error> {
     let parent = boot_class_loader(env)?;
     // SAFETY: CLASSES_DEX is a `'static` slice in the binary's rodata, so the
@@ -246,6 +320,7 @@ fn load_dex<'local>(env: &mut Env<'local>) -> Result<JClassLoader<'local>, Error
 /// singleton rather than `null` as on the JVM. Should that ever change, the
 /// system class loader is the next best thing: it delegates to the boot loader
 /// and adds only the (empty) system class path, not the app.
+#[cfg(feature = "embedded-dex")]
 fn boot_class_loader<'local>(env: &mut Env<'local>) -> Result<JClassLoader<'local>, Error> {
     let object = env.find_class(jni_str!("java/lang/Object"))?;
     let mut loader = env

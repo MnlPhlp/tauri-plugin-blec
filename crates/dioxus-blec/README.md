@@ -8,8 +8,9 @@
   reading and writing.
 - `use_ble_notifications(characteristic, service)` follows a characteristic for as long as the
   component lives, resubscribing after every reconnect.
-- On android the crate carries the bluetooth permissions. `dx` merges them into the app's
-  manifest, so there is no manifest to write and no gradle module to add.
+- On android the crate carries the bluetooth permissions and the Kotlin side of the BLE client as
+  a gradle module that `dx` builds into the app, so there is no manifest to write and no gradle
+  module to add.
 
 The full `blec` API stays available through `ble.handler()` and the re-exported `dioxus_blec::blec`.
 
@@ -94,11 +95,12 @@ min_sdk = 26
 
 Everything else is in this crate. `#[manganis::ffi("android")]` in `src/lib.rs` embeds the path of
 the crate's `android/` directory in the binary. `dx` picks it up when building for android, copies
-the directory into the generated gradle project as a library module, and the android gradle plugin
-merges the module's `AndroidManifest.xml` into the app's. That manifest declares the permissions
-with the attributes `[android.permissions]` in `Dioxus.toml` cannot express (`neverForLocation` on
+the directory into the generated gradle project as a library module and builds it with the app. The
+module's `AndroidManifest.xml` is merged into the app's; it declares the permissions with the
+attributes `[android.permissions]` in `Dioxus.toml` cannot express (`neverForLocation` on
 `BLUETOOTH_SCAN`, `maxSdkVersion` on the legacy `BLUETOOTH`) and the `bluetooth_le` feature. The
-module has no code; the bluetooth implementation is the dex embedded in `blec`, see
+module's Kotlin is the android backend of `blec`, which finds it in the app's class loader at
+startup. The directory is a symlink to `crates/blec/android/lib`, the one copy of that module; see
 [Android internals](../blec/README.md#android-internals).
 
 Runtime permissions are requested by the first scan, or explicitly with

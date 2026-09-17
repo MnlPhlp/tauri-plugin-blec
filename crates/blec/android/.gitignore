@@ -1,4 +1,5 @@
 /build
 /.gradle
 /dex/build
+/lib/build
 /local.properties

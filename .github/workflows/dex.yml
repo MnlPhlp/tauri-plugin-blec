@@ -1,5 +1,8 @@
-# The kotlin side of `blec` is committed as a prebuilt `classes.dex`. Rebuild it
-# whenever the sources change and fail if what is committed does not match.
+# The kotlin side of `blec` (crates/blec/android/lib) is also committed as a
+# prebuilt `classes.dex` for the `embedded-dex` feature. Rebuild it whenever the
+# sources change and fail if what is committed does not match. Building it also
+# compiles the library module the hosts ship, so this doubles as the kotlin
+# compile check.
 name: Android dex
 
 on:

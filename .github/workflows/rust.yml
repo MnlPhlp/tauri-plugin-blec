@@ -28,3 +28,13 @@ jobs:
       run: cargo check --workspace --features tauri-plugin-blec/mock
     - name: check android
       run: cargo check --workspace --target aarch64-linux-android
+    - name: check android with the embedded dex
+      run: cargo check -p blec --features embedded-dex --target aarch64-linux-android
+    - name: check the android module is packaged
+      run: |
+        for crate in tauri-plugin-blec dioxus-blec; do
+          cargo package --list -p "$crate" | grep -q 'android/src/main/java/com/plugin/blec/Bridge.kt' || {
+            echo "$crate: the android module (a symlink to crates/blec/android/lib) is not in the package"
+            exit 1
+          }
+        done

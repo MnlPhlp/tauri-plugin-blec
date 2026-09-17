@@ -5,8 +5,9 @@
 //!   async methods for the usual operations.
 //! - [`use_ble_notifications`] follows a characteristic for as long as the
 //!   component lives, across reconnects.
-//! - On android the crate carries the bluetooth permissions: `dx` merges them
-//!   into the app's manifest, so `Dioxus.toml` only needs `[android] min_sdk = 26`.
+//! - On android the crate carries the bluetooth permissions and the Kotlin
+//!   side of `blec` as a gradle module `dx` builds into the app, so
+//!   `Dioxus.toml` only needs `[android] min_sdk = 26`.
 //!
 //! The full `blec` API stays reachable through [`Ble::handler`] and the
 //! re-exported [`blec`] crate.
@@ -49,14 +50,17 @@ use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Tells `dx` about the `android/` directory next to this crate's `Cargo.toml`.
+/// Tells `dx` about the `android/` directory next to this crate's `Cargo.toml`,
+/// a symlink to `crates/blec/android/lib`.
 ///
 /// `#[manganis::ffi]` embeds the directory's path in the binary the same way
 /// assets are embedded. When `dx` builds for android it copies the directory
-/// into the generated gradle project as a library module, and the android
-/// gradle plugin merges the module's `AndroidManifest.xml` (the bluetooth
-/// permissions) into the app's. The module has no code; the class declared
-/// here only gives the module its name and is never used.
+/// into the generated gradle project as a library module and builds it with
+/// the app: the android gradle plugin merges the module's `AndroidManifest.xml`
+/// (the bluetooth permissions) into the app's, and the module's Kotlin, the
+/// android backend of `blec`, ends up in the apk where `blec` finds it at
+/// startup. The class declared here only gives the module its name; `blec`
+/// reaches the Kotlin through its own JNI bridge, never through this type.
 #[cfg(target_os = "android")]
 #[allow(dead_code)]
 mod android {

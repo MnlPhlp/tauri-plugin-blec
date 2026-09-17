@@ -40,3 +40,19 @@ declared with `#[manganis::ffi("android")]` so `dx` merges the permissions into 
 `Dioxus.toml` settings because `[android] manifest = "<file>"` is a dead key in dx 0.7 (parsed, never
 read) and `[android.permissions]` cannot express `neverForLocation`; details in
 `research-android-without-gradle.md`, section 3.
+
+Added 2026-09-17: the hosts now build the Kotlin themselves and the dex is opt-in. Loading a dex
+from memory is dynamic code loading, which hardened ROMs (GrapheneOS has a per-app toggle) block,
+so the default path is now the normal one: `crates/blec/android/lib` is an ordinary android library
+module and `crates/tauri-plugin-blec/android` and `crates/dioxus-blec/android` are symlinks to it,
+so tauri (`android_path`) and `dx` (`#[manganis::ffi]`) compile it into the app, and the bridge
+looks `com.plugin.blec.Bridge` up in the app's class loader first. The dex build and the
+`InMemoryDexClassLoader` path survive behind the `embedded-dex` cargo feature as the fallback for
+hosts without a gradle build; the `:dex` module now depends on `:lib` instead of holding the
+sources. Symlinks were chosen over copies after checking that `cargo package` (1.97, with and
+without git) stores the linked files as regular files, that `dx` 0.7.9 copies the module with
+`Path::is_dir` + `fs::copy` (both follow symlinks), and that gradle reads source sets through them.
+Two things cargo does not do through the symlink: apply the module's `.gitignore` (hence the
+`exclude` lists in the host crates' `Cargo.toml`) and, on Windows, materialize the link in a clone
+without `core.symlinks`. The `consumer-rules.pro` in the module keeps the JNI entry points through
+the app's R8; the dex build is byte-identical before and after the restructuring.

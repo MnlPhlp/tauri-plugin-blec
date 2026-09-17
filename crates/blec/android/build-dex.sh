@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Builds the kotlin side into the single `classes.dex` that `blec` embeds.
+# Builds the kotlin side (lib/src) into the single `classes.dex` that the
+# `embedded-dex` feature of `blec` embeds.
 #
 # Needs an android SDK (ANDROID_HOME) and a JDK 17+. Run it after changing
-# anything under `dex/src` and commit the result.
+# anything under `lib/src` and commit the result.
 set -euo pipefail
 cd "$(dirname "$0")"
 

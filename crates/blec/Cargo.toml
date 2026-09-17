@@ -1,7 +1,7 @@
 [package]
 name = "blec"
-version = "0.15.0"
-description = "Cross platform BLE client for rust, with an android backend that needs no gradle"
+version = "0.16.0"
+description = "Cross platform BLE client for rust, with an android backend for Tauri, Dioxus and custom hosts"
 readme = "README.md"
 license.workspace = true
 authors.workspace = true
@@ -33,6 +33,11 @@ ndk-context = "0.1"
 # Replaces the platform BLE backend with an in-process mock (see `blec::mock`).
 # Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
 mock = []
+# Embeds the android side (`android/lib`) as a prebuilt `classes.dex` and loads
+# it at runtime when the app was built without that gradle module. For hosts
+# without a gradle build; `tauri-plugin-blec` and `dioxus-blec` do not need it.
+# Loading code at runtime can be blocked on hardened android builds.
+embedded-dex = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }

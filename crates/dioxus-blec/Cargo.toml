@@ -1,8 +1,19 @@
 [package]
 name = "dioxus-blec"
-version = "0.15.0"
+version = "0.16.0"
 description = "blec, the cross platform BLE client, for Dioxus: hooks and signals, plus the android permissions"
 readme = "README.md"
+# `android` is a symlink to ../blec/android/lib. Cargo follows it when packaging
+# but does not apply the .gitignore in there, so the build output is excluded here.
+exclude = [
+  "/android/build",
+  "/android/.gradle",
+  "/android/.tauri",
+  "/android/gradle",
+  "/android/gradlew",
+  "/android/gradlew.bat",
+  "/android/local.properties",
+]
 license.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -11,7 +22,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-blec = { version = "0.15.0", path = "../blec" }
+blec = { version = "0.16.0", path = "../blec" }
 dioxus = { version = "0.7", default-features = false, features = ["hooks", "signals"] }
 tokio = { workspace = true, features = ["sync"] }
 uuid.workspace = true

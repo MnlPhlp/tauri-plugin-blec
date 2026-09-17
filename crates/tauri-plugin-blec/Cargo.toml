@@ -1,9 +1,21 @@
 [package]
 name = "tauri-plugin-blec"
-version = "0.15.0"
+version = "0.16.0"
 description = "BLE-Client plugin for Tauri"
 readme = "README.md"
-exclude = ["/node_modules", "/.yarn"]
+# `android` is a symlink to ../blec/android/lib. Cargo follows it when packaging
+# but does not apply the .gitignore in there, so the build output is excluded here.
+exclude = [
+  "/node_modules",
+  "/.yarn",
+  "/android/build",
+  "/android/.gradle",
+  "/android/.tauri",
+  "/android/gradle",
+  "/android/gradlew",
+  "/android/gradlew.bat",
+  "/android/local.properties",
+]
 links = "tauri-plugin-blec"
 license.workspace = true
 authors.workspace = true
@@ -13,7 +25,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-blec = { version = "0.15.0", path = "../blec" }
+blec = { version = "0.16.0", path = "../blec" }
 tauri = { version = "2.0.6", features = ["wry"] }
 serde.workspace = true
 tokio.workspace = true

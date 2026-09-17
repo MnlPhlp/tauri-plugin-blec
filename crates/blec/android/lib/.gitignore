@@ -1,0 +1,10 @@
+# Gradle output, whichever build compiled this module.
+/build
+/.gradle
+/local.properties
+# tauri-plugin's build.rs copies its android api here (never used, but it
+# does it for every plugin) and tauri may generate a wrapper here too.
+/.tauri
+/gradle
+/gradlew
+/gradlew.bat

@@ -27,8 +27,8 @@ emulator (`x86_64`) even when no emulator is running, and the install fails on a
 `INSTALL_FAILED_NO_MATCHING_ABIS`.
 
 There is nothing to set up for bluetooth. `Dioxus.toml` only declares `min_sdk = 26`; the
-permissions come with `dioxus-blec`, which `dx` merges into the manifest, and the android
-implementation is a dex embedded in `blec`. See the android section of the
+permissions and the Kotlin side of the BLE client come with `dioxus-blec` as a gradle module that
+`dx` builds into the app. See the android section of the
 [`dioxus-blec` README](../../crates/dioxus-blec/README.md#android).
 
 "Check permissions" asks the user for the bluetooth permissions; on a fresh install the system

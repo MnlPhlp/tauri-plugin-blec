@@ -44,20 +44,41 @@ drop, operations fail, hang or answer slowly, notifications arrive. See the hand
 
 Android has no pure-rust path to GATT: `BluetoothGattCallback` and `ScanCallback` are abstract
 classes, and `java.lang.reflect.Proxy` only implements interfaces. So the android backend is
-Kotlin, in `android/dex/src/main/java/com/plugin/blec/`.
+Kotlin, in `android/lib`, an ordinary android library module: the bluetooth permissions in its
+manifest plus the code that drives the platform bluetooth stack. Rust talks to it over a small JNI
+bridge (`src/android/bridge.rs`).
 
-To keep that an implementation detail rather than something every app has to wire up, the Kotlin
-is compiled to a single `classes.dex` that is committed as `src/android/classes.dex` and embedded
-with `include_bytes!`. At startup `blec` loads it with an `InMemoryDexClassLoader` and binds the
-callbacks with `RegisterNatives` (exported `Java_*` symbols never resolve for a dex-loaded class,
-because ART looks them up through the class' own loader). The loader's parent is the boot class
-loader, not the app's: class loading is parent-first, and with the app's loader the app's own
-kotlin stdlib (a Tauri app has one) would shadow the shrunk copy R8 optimized the Kotlin against,
-which shows up as `IllegalAccessError` on stdlib internals. The Kotlin side only needs the
-framework, so it shares nothing with the app. **An app using `blec` therefore needs no
-gradle module and no kotlin — only the permissions in its manifest.**
+The module is meant to be built into the app by the app's own gradle build, like any other
+module. `tauri-plugin-blec` and `dioxus-blec` do that for you: their `android/` directories are
+symlinks to `crates/blec/android/lib`, which tauri (`android_path`) and `dx` (`#[manganis::ffi]`)
+pick up, so the classes end up in the apk and `blec` finds them in the app's class loader at
+startup. **Nothing to set up on the app side.** A custom host adds
+`crates/blec/android/lib` to its gradle build the same way (`include(":blec")` with the
+directory as `projectDir`, `implementation(project(":blec"))`). The module's `consumer-rules.pro`
+keeps the JNI entry points through the app's R8 pass.
 
-Rebuild the dex after changing anything under `android/dex/src` and commit the result:
+### The `embedded-dex` feature
+
+For a host without a gradle build, the cargo feature `embedded-dex` embeds the same Kotlin as a
+prebuilt `classes.dex` (`src/android/classes.dex`, committed) and loads it with an
+`InMemoryDexClassLoader` when `com.plugin.blec.Bridge` is not in the app. The app's class loader
+is always tried first, so an app that does build the module never loads code at runtime even if
+some dependency turned the feature on.
+
+Two things to know about the dex path:
+
+- **Dynamic code loading can be blocked.** Hardened builds (for example the GrapheneOS "dynamic
+  code loading from memory" toggle) refuse `InMemoryDexClassLoader`; `blec::init()` then fails
+  with `Error::Android` explaining it. This is why the gradle module is the default.
+- The dex is loaded with the *boot* class loader as parent, not the app's: class loading is
+  parent-first, and with the app's loader the app's own kotlin stdlib (a Tauri app has one) would
+  shadow the shrunk copy R8 optimized the Kotlin against, which shows up as `IllegalAccessError`
+  on stdlib internals. Exported `Java_*` symbols never resolve for a dex-loaded class either, so
+  the natives are bound with `RegisterNatives` (also on the gradle path, where it is simply the
+  more robust choice).
+
+Rebuild the dex after changing anything under `android/lib/src` and commit the result; CI fails
+when the committed dex does not match the sources:
 
 ```bash
 crates/blec/android/build-dex.sh   # needs ANDROID_HOME and a JDK 17+
@@ -66,24 +87,25 @@ crates/blec/android/build-dex.sh   # needs ANDROID_HOME and a JDK 17+
 The build shrinks the kotlin stdlib into the same dex with R8 and fails if the result spilled
 into a `classes2.dex`, which `InMemoryDexClassLoader(ByteBuffer, ClassLoader)` cannot load.
 
-Three things to know when using this:
+### Either way
 
 - **`blec` needs a `JavaVM` and a `Context`.** `blec::init()` takes both from
   [`ndk-context`](https://crates.io/crates/ndk-context), which Dioxus initializes but Tauri
   (tao 0.35) does not. A host without `ndk-context` calls
   `blec::android::init_with(env, context)` first, from any thread with a `JNIEnv`;
   `tauri-plugin-blec` does that from `wry::prelude::dispatch` once the app is ready.
-- **Dynamic code loading can be blocked.** Hardened builds (for example the GrapheneOS "dynamic
-  code loading" toggle) refuse `InMemoryDexClassLoader`. `blec::init()` then fails with
-  `Error::Android` explaining it.
 - **A main `Looper` must run.** `BluetoothLeScanner` and the gatt callbacks post to it. Any normal
   android app has one; a headless process has to run one itself.
+- Runtime permissions need an `Activity`, which nobody here owns. `blec` tracks the current one
+  through `Application.ActivityLifecycleCallbacks`; a host that has an activity earlier can hand it
+  over with `blec::android::set_activity` (`tauri-plugin-blec` does this through
+  `wry::prelude::dispatch`). Permission results are picked up by re-checking the permissions when
+  the activity is resumed again, since there is no `onRequestPermissionsResult` to hook into.
 
-Runtime permissions need an `Activity`, which nobody here owns. `blec` tracks the current one
-through `Application.ActivityLifecycleCallbacks`; a host that has an activity earlier can hand it
-over with `blec::android::set_activity` (`tauri-plugin-blec` does this through
-`wry::prelude::dispatch`). Permission results are picked up by re-checking the permissions when
-the activity is resumed again, since there is no `onRequestPermissionsResult` to hook into.
+For contributors: `crates/tauri-plugin-blec/android` and `crates/dioxus-blec/android` are git
+symlinks. On Windows clone with `git config core.symlinks true` (needs developer mode or admin),
+otherwise they check out as text files. Published crates are unaffected: `cargo package` stores
+the linked files as regular files.
 
 ## License
 
