@@ -5,8 +5,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use blec::models::{AdapterState, BleDevice, ScanFilter, Service, TimeoutsMs, WriteType};
+use blec::OnDisconnectHandler;
 use blec::Result;
-use blec::{get_handler, OnDisconnectHandler};
 
 #[command]
 pub(crate) async fn scan<R: Runtime>(
@@ -16,7 +16,7 @@ pub(crate) async fn scan<R: Runtime>(
     allow_ibeacons: bool,
 ) -> Result<()> {
     tracing::info!("Scanning for BLE devices");
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     async_runtime::spawn(async move {
         while let Some(devices) = rx.recv().await {
@@ -35,7 +35,7 @@ pub(crate) async fn scan<R: Runtime>(
 #[command]
 pub(crate) async fn stop_scan<R: Runtime>(_app: AppHandle<R>) -> Result<()> {
     tracing::info!("Stopping BLE scan");
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     handler.stop_scan().await?;
     Ok(())
 }
@@ -48,7 +48,7 @@ pub(crate) async fn connect<R: Runtime>(
     allow_ibeacons: bool,
 ) -> Result<()> {
     tracing::info!("Connecting to BLE device: {:?}", address);
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let disconnct_handler = move || {
         if let Err(e) = on_disconnect.send(()) {
             warn!("Failed to send disconnect event to the front-end: {e}");
@@ -67,7 +67,7 @@ pub(crate) async fn connect<R: Runtime>(
 #[command]
 pub(crate) async fn disconnect<R: Runtime>(_app: AppHandle<R>) -> Result<()> {
     tracing::info!("Disconnecting from BLE device");
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     handler.disconnect().await?;
     Ok(())
 }
@@ -77,7 +77,7 @@ pub(crate) async fn connection_state<R: Runtime>(
     _app: AppHandle<R>,
     update: Channel<bool>,
 ) -> Result<()> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     handler.set_connection_update_channel(tx).await;
     if let Err(e) = update.send(handler.is_connected()) {
@@ -100,7 +100,7 @@ pub(crate) async fn scanning_state<R: Runtime>(
     _app: AppHandle<R>,
     update: Channel<bool>,
 ) -> Result<()> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     handler.set_scanning_update_channel(tx).await;
     if let Err(e) = update.send(handler.is_scanning().await) {
@@ -126,7 +126,7 @@ pub(crate) async fn send<R: Runtime>(
     write_type: WriteType,
 ) -> Result<()> {
     info!("Sending data: {data:?}");
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     handler
         .send_data(characteristic, service, &data, write_type)
         .await?;
@@ -139,7 +139,7 @@ pub(crate) async fn recv<R: Runtime>(
     characteristic: Uuid,
     service: Option<Uuid>,
 ) -> Result<Vec<u8>> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let data = handler.recv_data(characteristic, service).await?;
     Ok(data)
 }
@@ -170,7 +170,7 @@ async fn subscribe_channel(
     characteristic: Uuid,
     service: Option<Uuid>,
 ) -> Result<mpsc::Receiver<Vec<u8>>> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let (tx, rx) = tokio::sync::mpsc::channel(512);
     handler
         .subscribe(characteristic, service, move |data: Vec<u8>| {
@@ -224,7 +224,7 @@ pub(crate) async fn unsubscribe<R: Runtime>(
     _app: AppHandle<R>,
     characteristic: Uuid,
 ) -> Result<()> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     handler.unsubscribe(characteristic).await?;
     Ok(())
 }
@@ -234,6 +234,9 @@ pub(crate) async fn check_permissions(
     _app: AppHandle<impl Runtime>,
     ask_if_denied: bool,
 ) -> Result<bool> {
+    // Does not use the handler, but on android it does go through the same
+    // bridge, which the initialization sets up.
+    crate::ready().await?;
     blec::check_permissions(ask_if_denied).await
 }
 
@@ -242,7 +245,7 @@ pub(crate) async fn list_services<R: Runtime>(
     _app: tauri::AppHandle<R>,
     address: String,
 ) -> Result<Vec<Service>> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let services = handler
         .discover_services(&address)
         .await
@@ -252,32 +255,35 @@ pub(crate) async fn list_services<R: Runtime>(
 
 #[command]
 pub(crate) async fn get_adapter_state<R: Runtime>(_app: AppHandle<R>) -> Result<AdapterState> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let state = handler.get_adapter_state().await;
     Ok(state)
 }
 
 #[command]
 pub(crate) async fn mtu<R: Runtime>(_app: AppHandle<R>) -> Result<u16> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     let mtu = handler.mtu().await?;
     Ok(mtu)
 }
 
 #[command]
-pub(crate) fn set_write_behavior<R: Runtime>(
+pub(crate) async fn set_write_behavior<R: Runtime>(
     _app: AppHandle<R>,
     timeout_in_ms: Option<u32>,
     skip_waiting_on_success: bool,
 ) -> Result<()> {
-    let handler = get_handler()?;
+    let handler = crate::handler().await?;
     handler.set_write_behaviour(timeout_in_ms, skip_waiting_on_success);
     Ok(())
 }
 
 #[command]
-pub(crate) fn set_timeouts<R: Runtime>(_app: AppHandle<R>, timeouts: TimeoutsMs) -> Result<()> {
-    let handler = get_handler()?;
+pub(crate) async fn set_timeouts<R: Runtime>(
+    _app: AppHandle<R>,
+    timeouts: TimeoutsMs,
+) -> Result<()> {
+    let handler = crate::handler().await?;
     handler.set_timeouts(handler.timeouts().apply(timeouts));
     Ok(())
 }

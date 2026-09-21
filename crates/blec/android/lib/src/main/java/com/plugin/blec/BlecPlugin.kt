@@ -40,7 +40,14 @@ class BlecPlugin(private val context: Context) {
         val invoke: Invoke,
         val permissions: List<String>,
         val askIfDenied: Boolean,
-    )
+    ) {
+        /**
+         * Whether the activity was paused since the request was made, which is
+         * what the permission dialog taking the foreground looks like from
+         * here. See [onActivityResumed].
+         */
+        var wasPaused = false
+    }
 
     fun handle(cmd: String, invoke: Invoke) {
         when (cmd) {
@@ -252,17 +259,34 @@ class BlecPlugin(private val context: Context) {
         activity.requestPermissions(missing.toTypedArray(), PERMISSION_REQUEST_CODE)
     }
 
+    /** Notes that the permission dialog may have taken the foreground. */
+    fun onActivityPaused() {
+        this.pendingPermissions?.wasPaused = true
+    }
+
     /**
      * Picks up the result of a permission request.
      *
      * Nobody here owns the Activity subclass, so `onRequestPermissionsResult`
      * is not available: re-checking the permissions once the activity is back
      * in the foreground answers the same question.
+     *
+     * Only a resume that follows a pause does, though. The dialog is an
+     * activity of its own, so showing it pauses ours; a resume without a pause
+     * in between means the dialog never ran, which is what an app that was in
+     * the background when the request was made sees when the user returns to
+     * it. Answering there would report the permissions as denied before the
+     * user was ever asked. A resume that finds the permissions granted is
+     * conclusive either way, and covers a device that somehow shows the dialog
+     * without pausing us.
      */
     fun onActivityResumed() {
         val pending = this.pendingPermissions ?: return
-        this.pendingPermissions = null
         val granted = missing(pending.permissions).isEmpty()
+        if (!pending.wasPaused && !granted) {
+            return
+        }
+        this.pendingPermissions = null
         // Android shows the dialog only once. When the user denied it before,
         // the app settings page is the only way left to grant it.
         if (!granted && pending.askIfDenied) {

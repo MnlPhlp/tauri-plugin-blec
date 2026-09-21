@@ -1,7 +1,7 @@
 //! The android BLE backend.
 //!
-//! Implements the btleplug traits the [`Handler`](crate::Handler) uses on top of
-//! the Kotlin side, which it reaches through the JNI [`bridge`].
+//! Implements the btleplug traits the [`Handler`] uses on top of the Kotlin
+//! side, which it reaches through the JNI bridge in `bridge.rs`.
 
 mod bridge;
 
@@ -163,8 +163,24 @@ impl btleplug::api::Central for Adapter {
             allow_ibeacons: bool,
             on_device: bridge::Channel,
         }
-        DEVICES.write().await.clear();
         let (on_device, mut rx) = bridge::channel().map_err(ble_err)?;
+        // Nothing is torn down before this answers: the kotlin side rejects a
+        // second scan, and giving up the previous scan's channel and task for
+        // one that never started would leave its results nowhere to go. The
+        // results of this scan are not lost in the meantime, they queue up in
+        // the channel until the forwarding task below drains it.
+        bridge::call::<_, ()>(
+            "start_scan",
+            ScanParams {
+                services: filter.services,
+                allow_ibeacons: ALLOW_IBEACONS.load(Ordering::Relaxed),
+                on_device,
+            },
+            IPC_DEFAULT_TIMEOUT,
+        )
+        .await
+        .map_err(ble_err)?;
+        DEVICES.write().await.clear();
         let task = tokio::spawn(async move {
             while let Some(value) = rx.next().await {
                 let device = match serde_json::from_value::<PeripheralResult>(value) {
@@ -187,17 +203,6 @@ impl btleplug::api::Central for Adapter {
         {
             previous.abort();
         }
-        bridge::call::<_, ()>(
-            "start_scan",
-            ScanParams {
-                services: filter.services,
-                allow_ibeacons: ALLOW_IBEACONS.load(Ordering::Relaxed),
-                on_device,
-            },
-            IPC_DEFAULT_TIMEOUT,
-        )
-        .await
-        .map_err(ble_err)?;
         Ok(())
     }
 
@@ -467,7 +472,7 @@ impl btleplug::api::Peripheral for Peripheral {
         }))
     }
 
-    /// The services [`Self::discover_services`] found, empty before it ran.
+    /// The services `discover_services` found, empty before it ran.
     fn services(&self) -> BTreeSet<Service> {
         SERVICES
             .read()

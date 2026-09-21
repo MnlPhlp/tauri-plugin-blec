@@ -58,7 +58,9 @@ fun init(ctx: Context) {
             currentActivity = activity
             plugin?.onActivityResumed()
         }
-        override fun onActivityPaused(activity: Activity) {}
+        override fun onActivityPaused(activity: Activity) {
+            plugin?.onActivityPaused()
+        }
         override fun onActivityStopped(activity: Activity) {}
         override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) {}
         override fun onActivityDestroyed(activity: Activity) {

@@ -26,7 +26,7 @@ Or manually add it to the `src-tauri/Cargo.toml`
 
 ```toml
 [dependencies]
-tauri-plugin-blec = "0.15"
+tauri-plugin-blec = "0.16"
 ```
 
 ### Install the js bindings
@@ -97,7 +97,7 @@ Add the CoreBluetooth Framework in your xcode procjet:
 - click on your project to open settings
 - Add Framework under General -> Frameworks,Libraries and Embedded Content
 
-## Upgrading to 0.15
+## Upgrading to 0.16
 
 The crate was split: the BLE client now lives in [`blec`](../blec) and this crate is a thin tauri
 layer over it, re-exporting the whole rust API. Existing code keeps working, with two exceptions:
