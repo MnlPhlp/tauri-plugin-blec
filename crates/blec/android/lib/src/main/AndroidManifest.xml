@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Merged into the app's manifest by the android gradle plugin. Same content as
-     crates/tauri-plugin-blec/android/src/main/AndroidManifest.xml. -->
+<!-- Merged into the app's manifest by the android gradle plugin. The host crates
+     build this same module through a symlink, so this is the only copy. -->
 <manifest xmlns:tools="http://schemas.android.com/tools"
     xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>

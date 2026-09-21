@@ -36,7 +36,7 @@ private var plugin: BlecPlugin? = null
 internal var currentActivity: Activity? = null
     private set
 
-/** Sets up the plugin. Called from rust right after the dex is loaded. */
+/** Sets up the plugin. Called from rust right after this class was loaded. */
 fun init(ctx: Context) {
     if (plugin != null) {
         return

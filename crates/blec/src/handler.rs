@@ -204,8 +204,9 @@ impl<F: Fn(Vec<u8>) + Send + Sync + 'static> From<F> for SubscriptionHandler {
 
 impl Handler {
     pub(crate) async fn new() -> Result<Self, Error> {
-        // Loads the embedded dex and wires up the kotlin side before anything
-        // tries to talk to it. Idempotent.
+        // Finds the kotlin side and wires it up before anything tries to talk
+        // to it. Idempotent, and a no-op when the host already did it through
+        // `android::init_with`.
         #[cfg(all(target_os = "android", not(any(test, feature = "mock"))))]
         crate::android::init()?;
         Ok(Self::with_adapter(None))

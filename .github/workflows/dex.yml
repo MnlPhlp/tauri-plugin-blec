@@ -10,11 +10,14 @@ on:
     branches: ["main"]
     paths:
       - "crates/blec/android/**"
+      # So that a hand-edited dex is checked against the sources too.
+      - "crates/blec/src/android/classes.dex"
       - ".github/workflows/dex.yml"
   pull_request:
     branches: ["main"]
     paths:
       - "crates/blec/android/**"
+      - "crates/blec/src/android/classes.dex"
       - ".github/workflows/dex.yml"
   workflow_dispatch:
 

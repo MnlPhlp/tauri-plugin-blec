@@ -78,7 +78,8 @@ pub enum InitState {
     /// The handler is up; the [`Ble`] methods can be used.
     Ready,
     /// `blec::init()` failed with this message. On android this is where a
-    /// blocked dex load shows up.
+    /// missing kotlin side shows up, i.e. an app that did not build the
+    /// `android/` module of this crate.
     Failed(String),
 }
 

@@ -137,7 +137,7 @@ class Peripheral(
         } else if (event == Event.DeviceDisconnected) {
             data.put("DeviceDisconnected", this.device.address)
         }
-        println("sending event $data")
+        Log.v("Peripheral", "sending event $data")
         channel.send(data)
         if (event == Event.DeviceDisconnected) {
             reportLinkStillHeld(channel)
@@ -448,7 +448,7 @@ class Peripheral(
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
-            println("MTU changed to $mtu with status $status")
+            Log.d("Peripheral", "MTU changed to $mtu with status $status")
             currentMtu = mtu
             val invoke = this@Peripheral.onMtuInvoke
             this@Peripheral.onMtuInvoke = null
@@ -464,7 +464,7 @@ class Peripheral(
 
     @SuppressLint("MissingPermission")
     fun connect(invoke: Invoke) {
-        println("connect android implementation called")
+        Log.d("Peripheral", "connect ${this.device.address}")
         if (this.connected && this.gatt != null) {
             // Reconnecting would replace the open BluetoothGatt and leak the
             // old one. Report the existing connection instead.
@@ -540,7 +540,7 @@ class Peripheral(
             if (!gatt.discoverServices()) {
                 invoke.reject("failed to start service discovery");
             }
-            println("service discovery started")
+            Log.d("Peripheral", "service discovery started")
         }
     }
 

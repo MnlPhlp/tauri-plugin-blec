@@ -1,8 +1,8 @@
 # Notes: splitting out a host-agnostic `blec` core
 
-Planning material from 2026-09-16. **Implemented** — see the five commits on `decouple_from_tauri`
-(`split the crate into a blec core…` through `add a dioxus example and a dex drift check`).
-Kept as the record of why the design is what it is.
+Planning material from 2026-09-16. **Implemented** — see the commits on `decouple_from_tauri`,
+from `split the crate into a blec core…` onwards. Kept as the record of why the design is what
+it is.
 
 - `plan-blec-core-split.md` — the plan: options considered, chosen design (Kotlin compiled to a
   committed `classes.dex`, loaded via `InMemoryDexClassLoader` + `RegisterNatives`), workspace layout,

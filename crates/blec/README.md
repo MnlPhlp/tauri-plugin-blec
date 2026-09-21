@@ -97,10 +97,11 @@ into a `classes2.dex`, which `InMemoryDexClassLoader(ByteBuffer, ClassLoader)` c
 - **A main `Looper` must run.** `BluetoothLeScanner` and the gatt callbacks post to it. Any normal
   android app has one; a headless process has to run one itself.
 - Runtime permissions need an `Activity`, which nobody here owns. `blec` tracks the current one
-  through `Application.ActivityLifecycleCallbacks`; a host that has an activity earlier can hand it
-  over with `blec::android::set_activity` (`tauri-plugin-blec` does this through
-  `wry::prelude::dispatch`). Permission results are picked up by re-checking the permissions when
-  the activity is resumed again, since there is no `onRequestPermissionsResult` to hook into.
+  through `Application.ActivityLifecycleCallbacks`, and a `Context` that is already an `Activity`
+  (what `tauri-plugin-blec` hands to `init_with`) counts as well. A host whose activity is not
+  covered by either can pass it in with `blec::android::set_activity`. There is no
+  `onRequestPermissionsResult` to hook into, so the result of a request is read back off the
+  permissions themselves once the activity is resumed after the dialog closed.
 
 For contributors: `crates/tauri-plugin-blec/android` and `crates/dioxus-blec/android` are git
 symlinks. On Windows clone with `git config core.symlinks true` (needs developer mode or admin),

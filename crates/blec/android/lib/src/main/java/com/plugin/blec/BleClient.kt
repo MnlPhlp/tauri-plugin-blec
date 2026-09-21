@@ -16,6 +16,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.ParcelUuid
+import android.util.Log
 import android.util.SparseArray
 import org.json.JSONArray
 import org.json.JSONObject
@@ -190,7 +191,10 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
                 }
             }
             override fun onScanFailed(errorCode: Int){
-                println("Scan failed with error code $errorCode")
+                // The scan was already answered when it started, and there is
+                // no channel for a scan-level error, so this only reaches the
+                // log: the rust side sees a scan that reports no devices.
+                Log.e(TAG, "scan failed with error code $errorCode")
             }
             override fun onScanResult(callbackType: Int, result: ScanResult){
                 sendResult(result)
@@ -210,7 +214,7 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
     }
 
     /**
-     * Puts a known address back into [BleClientPlugin.devices] without scanning
+     * Puts a known address back into [BlecPlugin.devices] without scanning
      * for it, so a device stays connectable after a new scan cleared the map.
      * `getRemoteDevice` answers for any well formed address, so this says
      * nothing about the device being in range - connecting is what finds out.
