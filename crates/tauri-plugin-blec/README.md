@@ -26,7 +26,7 @@ Or manually add it to the `src-tauri/Cargo.toml`
 
 ```toml
 [dependencies]
-tauri-plugin-blec = "0.17.0" # x-release-please-version
+tauri-plugin-blec = "0.18.0" # x-release-please-version
 ```
 
 ### Install the js bindings

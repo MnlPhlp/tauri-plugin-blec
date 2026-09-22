@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-blec"
-version = "0.17.0" # x-release-please-version
+version = "0.18.0" # x-release-please-version
 description = "BLE-Client plugin for Tauri"
 readme = "README.md"
 # `android` is a symlink to ../blec/android/lib. Cargo follows it when packaging
@@ -25,7 +25,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-blec = { version = "0.17.0", path = "../blec" } # x-release-please-version
+blec = { version = "0.18.0", path = "../blec" } # x-release-please-version
 tauri = { version = "2.0.6", features = ["wry"] }
 # `sync` for the command channels and the android init watch, `time` for its timeout.
 tokio = { workspace = true, features = ["sync", "time"] }
