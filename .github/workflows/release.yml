@@ -1,0 +1,109 @@
+# The whole release pipeline. release-please keeps a `chore: release X.Y.Z` PR
+# up to date from the conventional commits on main; merging it writes the version
+# into every crate, the npm package and the two READMEs, cuts the tag and the
+# GitHub release, and publishes.
+#
+# This file's NAME is pinned in the crates.io and npm trusted-publisher configs,
+# so the publish jobs have to live here. Renaming it breaks publishing until the
+# publishers are updated on both registries.
+name: Release
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a run that may be halfway through publishing.
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      # For the "Created releases" comment release-please posts on the merged PR.
+      issues: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      # A GitHub App token rather than GITHUB_TOKEN: events from GITHUB_TOKEN do
+      # not start new workflow runs, so the release PR would get no CI.
+      - name: Mint a bot token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-crates:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      # To mint the OIDC JWT that crates.io trades for a short-lived token.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install tauri dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev
+      # Warm the verification build before minting the token, which only lives
+      # for 30 minutes. This is the same check rust.yml runs on the release PR.
+      - name: Verify the workspace packages
+        run: cargo package --workspace
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      # `--workspace` publishes blec before its two dependents and waits for the
+      # index between batches, so no sleep or retry is needed. No `--locked`:
+      # Cargo.lock is gitignored and `--locked` errors when it is missing.
+      - name: Publish blec, tauri-plugin-blec and dioxus-blec
+        run: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-npm:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      # For npm OIDC and the provenance attestation.
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: crates/tauri-plugin-blec
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          # Trusted publishing needs node >= 22.14.0.
+          node-version: 22
+          # Deliberately no registry-url: it writes an .npmrc _authToken line
+          # that expands to empty and shadows the OIDC flow.
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest # needs >= 11.5.1
+      # Not --frozen-lockfile: yarn.lock is gitignored.
+      - run: yarn install
+      - run: yarn build
+      - run: npm publish --access public --provenance

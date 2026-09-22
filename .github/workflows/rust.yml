@@ -30,8 +30,13 @@ jobs:
       run: cargo check --workspace --target aarch64-linux-android
     - name: check android with the embedded dex
       run: cargo check -p blec --features embedded-dex --target aarch64-linux-android
-    - name: check the android module is packaged
+    # `cargo package --workspace` runs the same cross-crate verification build
+    # that `cargo publish --workspace` will at release time, against an
+    # unpublished blec. It is what catches a bad version bump on the release PR,
+    # before the tag exists and the publish is unretractable.
+    - name: check the workspace packages and the android module is packaged
       run: |
+        cargo package --workspace
         for crate in tauri-plugin-blec dioxus-blec; do
           cargo package --list -p "$crate" | grep -q 'android/src/main/java/com/plugin/blec/Bridge.kt' || {
             echo "$crate: the android module (a symlink to crates/blec/android/lib) is not in the package"

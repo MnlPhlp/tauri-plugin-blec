@@ -1,0 +1,42 @@
+# The changelog and the version bump are derived entirely from the commits on
+# main, and PRs are squash-merged with the PR title as the commit subject. So the
+# PR title is what has to be a conventional commit.
+name: Lint PR title
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: lint-pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  main:
+    name: Validate PR title
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # `chore` has to stay in this list: release-please titles its own
+          # release PR `chore: release X.Y.Z`.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" in the PR title "{title}" must start with a lowercase letter.

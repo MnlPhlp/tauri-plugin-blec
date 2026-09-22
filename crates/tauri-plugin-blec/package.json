@@ -1,9 +1,22 @@
 {
   "name": "@mnlphlp/plugin-blec",
-  "version": "0.13.0",
+  "version": "0.16.0",
   "author": "Manuel Philipp",
   "description": "JS Bindings for BLE-Client plugin for Tauri",
   "license": "(MIT OR Apache-2.0)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MnlPhlp/tauri-plugin-blec.git",
+    "directory": "crates/tauri-plugin-blec"
+  },
+  "homepage": "https://github.com/MnlPhlp/tauri-plugin-blec",
+  "bugs": {
+    "url": "https://github.com/MnlPhlp/tauri-plugin-blec/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "types": "./dist-js/index.d.ts",
   "main": "./dist-js/index.cjs",

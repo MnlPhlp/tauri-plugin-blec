@@ -1,6 +1,6 @@
 [package]
 name = "dioxus-blec"
-version = "0.16.0"
+version = "0.16.0" # x-release-please-version
 description = "blec, the cross platform BLE client, for Dioxus: hooks and signals, plus the android permissions"
 readme = "README.md"
 # `android` is a symlink to ../blec/android/lib. Cargo follows it when packaging
@@ -22,7 +22,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-blec = { version = "0.16.0", path = "../blec" }
+blec = { version = "0.16.0", path = "../blec" } # x-release-please-version
 dioxus = { version = "0.7", default-features = false, features = ["hooks", "signals"] }
 tokio = { workspace = true, features = ["sync"] }
 uuid.workspace = true

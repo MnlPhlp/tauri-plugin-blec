@@ -18,7 +18,7 @@ The full `blec` API stays available through `ble.handler()` and the re-exported 
 
 ```toml
 [dependencies]
-dioxus-blec = "0.16"
+dioxus-blec = "0.16.0" # x-release-please-version
 ```
 
 ```rust

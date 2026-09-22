@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "separate-pull-requests": true,
+  "pull-request-title-pattern": "chore: release ${version}",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "tauri-plugin-blec",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance Improvements" },
+        { "type": "revert", "section": "Reverts" },
+        { "type": "refactor", "section": "Code Refactoring" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "build", "section": "Build System", "hidden": true },
+        { "type": "ci", "section": "Continuous Integration", "hidden": true },
+        { "type": "test", "section": "Tests", "hidden": true },
+        { "type": "style", "section": "Styles", "hidden": true },
+        { "type": "chore", "section": "Miscellaneous Chores", "hidden": true }
+      ],
+      "extra-files": [
+        { "type": "generic", "path": "crates/blec/Cargo.toml" },
+        { "type": "generic", "path": "crates/tauri-plugin-blec/Cargo.toml" },
+        { "type": "generic", "path": "crates/dioxus-blec/Cargo.toml" },
+        { "type": "json", "path": "crates/tauri-plugin-blec/package.json", "jsonpath": "$.version" },
+        "crates/tauri-plugin-blec/README.md",
+        "crates/dioxus-blec/README.md"
+      ]
+    }
+  }
+}
