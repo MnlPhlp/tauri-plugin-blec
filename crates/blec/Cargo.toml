@@ -1,6 +1,6 @@
 [package]
 name = "blec"
-version = "0.16.0" # x-release-please-version
+version = "0.17.0" # x-release-please-version
 description = "Cross platform BLE client for rust, with an android backend for Tauri, Dioxus and custom hosts"
 readme = "README.md"
 # A host builds `android/lib` and nothing else; the standalone gradle project
