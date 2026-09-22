@@ -7,9 +7,11 @@ debug.log
 package-lock.json
 .vscode/settings.json
 yarn.lock
+# yarn cache
+.yarn
 
-/.tauri
-/target
+.tauri/
+target/
 Cargo.lock
 node_modules/
 

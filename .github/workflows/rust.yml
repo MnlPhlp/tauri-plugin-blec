@@ -12,19 +12,29 @@ env:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install tauri dependencies
       run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev
     - name: install rust android target
       run: rustup target add aarch64-linux-android
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --workspace --verbose
     - name: check mock feature
-      run: cargo check --features mock
+      run: cargo check --workspace --features tauri-plugin-blec/mock
     - name: check android
-      run: cargo check --target aarch64-linux-android
+      run: cargo check --workspace --target aarch64-linux-android
+    - name: check android with the embedded dex
+      run: cargo check -p blec --features embedded-dex --target aarch64-linux-android
+    - name: check the android module is packaged
+      run: |
+        for crate in tauri-plugin-blec dioxus-blec; do
+          cargo package --list -p "$crate" | grep -q 'android/src/main/java/com/plugin/blec/Bridge.kt' || {
+            echo "$crate: the android module (a symlink to crates/blec/android/lib) is not in the package"
+            exit 1
+          }
+        done

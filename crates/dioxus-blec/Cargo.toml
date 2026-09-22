@@ -1,0 +1,54 @@
+[package]
+name = "dioxus-blec"
+version = "0.16.0"
+description = "blec, the cross platform BLE client, for Dioxus: hooks and signals, plus the android permissions"
+readme = "README.md"
+# `android` is a symlink to ../blec/android/lib. Cargo follows it when packaging
+# but does not apply the .gitignore in there, so the build output is excluded here.
+exclude = [
+  "/android/build",
+  "/android/.gradle",
+  "/android/.tauri",
+  "/android/gradle",
+  "/android/gradlew",
+  "/android/gradlew.bat",
+  "/android/local.properties",
+]
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+blec = { version = "0.16.0", path = "../blec" }
+dioxus = { version = "0.7", default-features = false, features = ["hooks", "signals"] }
+tokio = { workspace = true, features = ["sync"] }
+uuid.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Only for `#[manganis::ffi]`, which is how `dx` learns about the `android/` module.
+manganis = "0.7"
+
+[dev-dependencies]
+# The doc examples are components, which need the `rsx!` and `#[component]` macros.
+dioxus = { version = "0.7", default-features = false, features = ["hooks", "signals", "macro", "html"] }
+
+[features]
+# Replaces the platform BLE backend with an in-process mock (see `blec::mock`).
+# Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
+mock = ["blec/mock"]
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs"]
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-linux-android",
+  "x86_64-apple-ios",
+]

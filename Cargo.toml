@@ -1,20 +1,21 @@
-[package]
-name = "tauri-plugin-blec"
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# The examples are standalone crates with their own lockfiles (and, for the
+# tauri ones, their own npm projects), not workspace members.
+exclude = ["examples"]
+
+[workspace.package]
 license = "MIT OR Apache-2.0"
-version = "0.14.1"
 authors = ["Manuel Philipp"]
-description = "BLE-Client plugin for Tauri"
 edition = "2021"
 rust-version = "1.80.0"
-exclude = ["/examples", "/webview-dist", "/webview-src", "/node_modules"]
-links = "tauri-plugin-blec"
 repository = "https://github.com/MnlPhlp/tauri-plugin-blec"
-readme = "README.md"
 homepage = "https://github.com/MnlPhlp/tauri-plugin-blec"
 
-[dependencies]
-tauri = { version = "2.0.6", features = ["wry"] }
+[workspace.dependencies]
 serde = "1.0"
+serde_json = "1"
 thiserror = "2.0"
 btleplug = { version = "0.13", features = ["serde"] }
 tokio = "1.40.0"
@@ -23,35 +24,6 @@ once_cell = "1.20.2"
 tracing = "0.1.40"
 futures = { version = "0.3.31", default-features = false }
 enumflags2 = { version = "0.7", features = ["serde"] }
-
-# [target.'cfg(target_os = "android")'.dependencies]
 async-trait = "0.1.83"
-serde_json = "1"
 tokio-stream = "0.1.16"
 base64 = "0.22.1"
-
-[features]
-# Replaces the platform BLE backend with an in-process mock (see `tauri_plugin_blec::mock`).
-# Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
-mock = []
-
-[dev-dependencies]
-tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread", "time", "test-util"] }
-rand = "0.8"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-[build-dependencies]
-tauri-plugin = { version = "2.0.1", features = ["build"] }
-tauri-build = "2.0.1"
-
-[package.metadata.docs.rs]
-rustc-args = ["--cfg", "docsrs"]
-rustdoc-args = ["--cfg", "docsrs"]
-default-target = "x86_64-unknown-linux-gnu"
-targets = [
-  "x86_64-pc-windows-msvc",
-  "x86_64-unknown-linux-gnu",
-  "x86_64-apple-darwin",
-  "x86_64-linux-android",
-  "x86_64-apple-ios",
-]

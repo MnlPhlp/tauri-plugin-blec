@@ -1,0 +1,20 @@
+[package]
+name = "dioxus-blec-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone, like the other examples: not a member of the repo workspace.
+[workspace]
+
+[dependencies]
+dioxus-blec = { path = "../../crates/dioxus-blec" }
+dioxus = "0.7"
+tracing = "0.1"
+uuid = "1"
+
+[features]
+default = []
+# Replaces the platform backend with blec's in-process mock, so the app can be
+# run on a machine without a bluetooth adapter.
+mock = ["dioxus-blec/mock"]

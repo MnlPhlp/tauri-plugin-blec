@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Only here because an android application module needs a manifest. This apk is
+  never installed; the build exists to produce `classes.dex`. The permissions
+  the plugin needs belong in the manifest of the app that uses it, see
+  ../../../README.md.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:hasCode="true" />
+</manifest>

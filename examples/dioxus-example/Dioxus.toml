@@ -1,0 +1,10 @@
+[application]
+name = "dioxus-blec-example"
+
+[web.app]
+title = "blec"
+
+# The bluetooth permissions come with the `dioxus-blec` crate; the only android
+# setting the app needs is the minimum sdk that crate requires.
+[android]
+min_sdk = 26

@@ -1,0 +1,54 @@
+[package]
+name = "tauri-plugin-blec"
+version = "0.16.0"
+description = "BLE-Client plugin for Tauri"
+readme = "README.md"
+# `android` is a symlink to ../blec/android/lib. Cargo follows it when packaging
+# but does not apply the .gitignore in there, so the build output is excluded here.
+exclude = [
+  "/node_modules",
+  "/.yarn",
+  "/android/build",
+  "/android/.gradle",
+  "/android/.tauri",
+  "/android/gradle",
+  "/android/gradlew",
+  "/android/gradlew.bat",
+  "/android/local.properties",
+]
+links = "tauri-plugin-blec"
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+blec = { version = "0.16.0", path = "../blec" }
+tauri = { version = "2.0.6", features = ["wry"] }
+# `sync` for the command channels and the android init watch, `time` for its timeout.
+tokio = { workspace = true, features = ["sync", "time"] }
+uuid.workspace = true
+tracing.workspace = true
+
+[features]
+# Replaces the platform BLE backend with an in-process mock (see `tauri_plugin_blec::mock`).
+# Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
+mock = ["blec/mock"]
+
+[build-dependencies]
+tauri-plugin = { version = "2.0.1", features = ["build"] }
+tauri-build = "2.0.1"
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs"]
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-linux-android",
+  "x86_64-apple-ios",
+]

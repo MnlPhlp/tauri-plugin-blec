@@ -1,0 +1,69 @@
+[package]
+name = "blec"
+version = "0.16.0"
+description = "Cross platform BLE client for rust, with an android backend for Tauri, Dioxus and custom hosts"
+readme = "README.md"
+# A host builds `android/lib` and nothing else; the standalone gradle project
+# around it only exists to rebuild the committed `classes.dex` in this repo.
+exclude = [
+  "/android/build-dex.sh",
+  "/android/dex",
+  "/android/gradle",
+  "/android/gradle.properties",
+  "/android/gradlew",
+  "/android/gradlew.bat",
+  "/android/settings.gradle.kts",
+]
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+btleplug.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+futures.workspace = true
+enumflags2.workspace = true
+async-trait.workspace = true
+tokio-stream.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+ndk-context = "0.1"
+# The kotlin side sends characteristic values as base64.
+base64.workspace = true
+
+[features]
+# Replaces the platform BLE backend with an in-process mock (see `blec::mock`).
+# Meant for tests and for running an app without Bluetooth hardware. Desktop targets only.
+mock = []
+# Embeds the android side (`android/lib`) as a prebuilt `classes.dex` and loads
+# it at runtime when the app was built without that gradle module. For hosts
+# without a gradle build; `tauri-plugin-blec` and `dioxus-blec` do not need it.
+# Loading code at runtime can be blocked on hardened android builds.
+embedded-dex = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
+rand = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package.metadata.docs.rs]
+rustc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs"]
+default-target = "x86_64-unknown-linux-gnu"
+targets = [
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-linux-android",
+  "x86_64-apple-ios",
+]
