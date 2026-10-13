@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.18.0](https://github.com/MnlPhlp/tauri-plugin-blec/compare/v0.17.0...v0.18.0) (2026-10-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* multi device support added ([#71](https://github.com/MnlPhlp/tauri-plugin-blec/issues/71))
+
+### Features
+
+* multi device support added ([#71](https://github.com/MnlPhlp/tauri-plugin-blec/issues/71)) ([b36cb33](https://github.com/MnlPhlp/tauri-plugin-blec/commit/b36cb3361366d404d9fffa85c5834fd54e0ede42))
+
+
+### Performance Improvements
+
+* **android:** optimize for invocation ([#65](https://github.com/MnlPhlp/tauri-plugin-blec/issues/65)) ([6ad0dab](https://github.com/MnlPhlp/tauri-plugin-blec/commit/6ad0dabbc5231abba41d3021a1615121f246e7f7))
+
 ## [0.17.0](https://github.com/MnlPhlp/tauri-plugin-blec/compare/v0.16.0...v0.17.0) (2026-09-22)
 
 
