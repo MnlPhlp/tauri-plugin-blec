@@ -119,7 +119,7 @@ fn App() -> Element {
                         read_value.set(None);
                         subscribed.set(false);
                         status.set(match ble.connect(&address).await {
-                            Ok(()) => Status::info("connected"),
+                            Ok(_) => Status::info("connected"),
                             Err(e) => Status::error(format!("connect failed: {e}")),
                         });
                     },

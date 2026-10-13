@@ -4,10 +4,14 @@
 [Dioxus](https://dioxuslabs.com) 0.7.
 
 - `use_ble()` initializes `blec` once for the app and mirrors its state into signals: ready,
-  scanning, found devices, connected device. It has async methods for scanning, connecting,
+  scanning, found devices, connected devices. It has async methods for scanning, connecting,
   reading and writing.
-- `use_ble_notifications(characteristic, service)` follows a characteristic for as long as the
-  component lives, resubscribing after every reconnect.
+- Several devices can be connected at once: `ble.connect(address)` returns a `Connection` for
+  reading, writing and subscribing on that device, and `ble.connected_devices()` lists them.
+  `ble.connected()`, `ble.read()` and `ble.write()` work on the only connected device.
+- `use_device_notifications(address, characteristic, service)` follows a characteristic of one
+  device for as long as the component lives, resubscribing after every reconnect.
+  `use_ble_notifications(characteristic, service)` does the same for the only connected device.
 - On android the crate carries the bluetooth permissions and the Kotlin side of the BLE client as
   a gradle module that `dx` builds into the app, so there is no manifest to write and no gradle
   module to add.

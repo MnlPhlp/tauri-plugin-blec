@@ -210,6 +210,15 @@ pub enum ScanFilter {
     ManufacturerDataMasked(u16, Vec<u8>, Vec<u8>),
 }
 
+/// A device connected or disconnected, see
+/// [`crate::Handler::set_connection_event_channel`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionUpdate {
+    pub address: String,
+    pub connected: bool,
+}
+
 /// State of the Bluetooth adapter
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum AdapterState {

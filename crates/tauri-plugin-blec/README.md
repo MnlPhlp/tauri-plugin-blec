@@ -107,6 +107,14 @@ layer over it, re-exporting the whole rust API. Existing code keeps working, wit
 
 In a non-tauri rust app, depend on `blec` directly instead.
 
+## Upgrading to 0.18
+
+Several devices can be connected at the same time now. `connect` no longer disconnects the
+device that was connected before; call `disconnectAll()` (`handler.disconnect_all()` in rust)
+first to get the old behaviour. Everything else keeps working while one device is connected: the
+functions without an address work on the only connected device, and fail while several are.
+In rust, `connect` returns a `Connection` instead of `()`.
+
 ## Usage in Frontend
 
 See [examples/plugin-blec-example](../../examples/plugin-blec-example) for a full working example that scans for devices, connects and sends/receives data.
@@ -123,6 +131,20 @@ await connect(address, () => console.log('disconnected'))
 // send some text to a characteristic
 const CHARACTERISTIC_UUID = '51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B'
 await sendString(CHARACTERISTIC_UUID, 'Test', 'withResponse')
+```
+
+With several devices, use the `BleConnection` that `connect` returns (or `connection(address)`
+for a device that is connected already):
+
+```ts
+import { connect, disconnectAll, getConnectionEvents } from '@mnlphlp/plugin-blec'
+
+await getConnectionEvents(({ address, connected }) => console.log(address, connected))
+const sensor = await connect(sensorAddress, null)
+const lamp = await connect(lampAddress, null)
+await sensor.subscribe(CHARACTERISTIC_UUID, null, (data) => lamp.send(CHARACTERISTIC_UUID, data))
+// ...
+await disconnectAll()
 ```
 
 ## Testing

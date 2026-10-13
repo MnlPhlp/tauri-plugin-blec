@@ -17,8 +17,8 @@ mod commands;
 pub use blec::mock;
 pub use blec::models;
 pub use blec::{
-    check_permissions, get_handler, Error, Handler, OnDisconnectHandler, Result,
-    SubscriptionHandler, Timeouts, TimeoutsMs, ALLOW_IBEACONS,
+    check_permissions, get_handler, Connection, ConnectionUpdate, Error, Handler,
+    OnDisconnectHandler, Result, SubscriptionHandler, Timeouts, TimeoutsMs, ALLOW_IBEACONS,
 };
 
 /// Builds the plugin, initializing the BLE handler.
@@ -51,7 +51,7 @@ pub fn try_init() -> Result<TauriPlugin<Wry>> {
             ) {
                 if let Ok(handler) = get_handler() {
                     if handler.is_connected() {
-                        let _ = async_runtime::block_on(handler.disconnect());
+                        let _ = async_runtime::block_on(handler.disconnect_all());
                     }
                 }
             }

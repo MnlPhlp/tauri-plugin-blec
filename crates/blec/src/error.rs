@@ -16,6 +16,14 @@ pub enum Error {
     #[error("No device connected")]
     NoDeviceConnected,
 
+    #[error("Device {0} is not connected")]
+    DeviceNotConnected(String),
+
+    /// A method without an address was used while several devices are
+    /// connected; use the variant taking an address or a [`crate::Connection`].
+    #[error("More than one device is connected, the address of the device is required")]
+    MultipleDevicesConnected,
+
     #[error("Device is already connected.")]
     AlreadyConnected,
 

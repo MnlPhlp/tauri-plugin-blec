@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-connected-devices"
+description = "Enables the connected_devices command without any pre-configured scope."
+commands.allow = ["connected_devices"]
+
+[[permission]]
+identifier = "deny-connected-devices"
+description = "Denies the connected_devices command without any pre-configured scope."
+commands.deny = ["connected_devices"]

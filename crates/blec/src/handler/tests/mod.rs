@@ -5,6 +5,7 @@
 mod connect;
 mod disconnect;
 mod helpers;
+mod multi;
 mod notify;
 mod scan;
 mod stress;

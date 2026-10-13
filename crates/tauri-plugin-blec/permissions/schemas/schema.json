@@ -319,6 +319,30 @@
           "markdownDescription": "Denies the connect command without any pre-configured scope."
         },
         {
+          "description": "Enables the connected_devices command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-connected-devices",
+          "markdownDescription": "Enables the connected_devices command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the connected_devices command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-connected-devices",
+          "markdownDescription": "Denies the connected_devices command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the connection_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-connection-events",
+          "markdownDescription": "Enables the connection_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the connection_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-connection-events",
+          "markdownDescription": "Denies the connection_events command without any pre-configured scope."
+        },
+        {
           "description": "Enables the connection_state command without any pre-configured scope.",
           "type": "string",
           "const": "allow-connection-state",
@@ -341,6 +365,18 @@
           "type": "string",
           "const": "deny-disconnect",
           "markdownDescription": "Denies the disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the disconnect_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-disconnect-all",
+          "markdownDescription": "Enables the disconnect_all command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the disconnect_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-disconnect-all",
+          "markdownDescription": "Denies the disconnect_all command without any pre-configured scope."
         },
         {
           "description": "Enables the get_adapter_state command without any pre-configured scope.",
@@ -535,10 +571,10 @@
           "markdownDescription": "Denies the unsubscribe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-disconnect-all`\n- `allow-connected-devices`\n- `allow-connection-state`\n- `allow-connection-events`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-connection-state`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-disconnect-all`\n- `allow-connected-devices`\n- `allow-connection-state`\n- `allow-connection-events`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`"
         }
       ]
     }

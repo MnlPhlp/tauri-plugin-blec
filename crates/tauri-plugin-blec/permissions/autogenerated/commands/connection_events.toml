@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-connection-events"
+description = "Enables the connection_events command without any pre-configured scope."
+commands.allow = ["connection_events"]
+
+[[permission]]
+identifier = "deny-connection-events"
+description = "Denies the connection_events command without any pre-configured scope."
+commands.deny = ["connection_events"]

@@ -1,5 +1,8 @@
+use crate::connection::Connection;
 use crate::error::Error;
-use crate::models::{self, fmt_addr, AdapterState, BleDevice, ScanFilter, Service, Timeouts};
+use crate::models::{
+    self, AdapterState, BleDevice, ConnectionUpdate, ScanFilter, Service, Timeouts,
+};
 use crate::ALLOW_IBEACONS;
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _};
 use btleplug::api::{CentralEvent, CentralState, RetrievePeripheralsOptions};
@@ -8,7 +11,7 @@ use futures::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch, Mutex};
@@ -38,30 +41,72 @@ struct Listener {
     callback: SubscriptionHandler,
 }
 
-struct HandlerState {
+/// Source of [`Link::id`].
+static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Everything the handler knows about the link to one device.
+///
+/// A link exists from the moment a connect to its address starts until the
+/// connection is gone; [`Link::connected`] tells the pending phase apart from
+/// the established one.
+struct Link {
+    /// Tells this link apart from a later one to the same address, so a slow
+    /// disconnect never clears a connection that was made after it started.
+    id: u64,
+    /// The instance `connect()` ran on. On android it carries the negotiated
+    /// MTU, which a clone taken before the connect would not see.
+    peripheral: Peripheral,
+    /// Whether the adapter reported the link as up. Set by `handle_connect`,
+    /// waited on by connect and disconnect.
+    connected: watch::Sender<bool>,
     characs: Vec<Characteristic>,
-    listen_handle: Option<tokio::task::JoinHandle<()>>,
+    listeners: Arc<Mutex<Vec<Listener>>>,
+    /// Task forwarding the device's notifications to `listeners`
+    listen_task: Option<tokio::task::JoinHandle<()>>,
     on_disconnect: OnDisconnectHandler,
-    connection_update_channel: Vec<mpsc::Sender<bool>>,
-    scan_update_channel: Vec<mpsc::Sender<bool>>,
-    scan_task: Option<tokio::task::JoinHandle<()>>,
+    /// Serializes the GATT operations on this device: only one read, write,
+    /// subscription or discovery can be in flight per link. Operations on
+    /// different devices run in parallel.
+    gatt_lock: Arc<Mutex<()>>,
+    /// A link [`Handler::discover_services`] opened only to read the services.
+    /// It is invisible to the rest of the API and emits no connection updates.
+    temporary: bool,
 }
 
-impl HandlerState {
-    fn get_charac(&self, uuid: Uuid) -> Result<&Characteristic, Error> {
-        trace!("getting characteristic {uuid}");
-        let charac = self.characs.iter().find(|c| c.uuid == uuid);
-        charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
+impl Link {
+    fn new(peripheral: Peripheral, temporary: bool) -> Self {
+        Self {
+            id: NEXT_LINK_ID.fetch_add(1, Ordering::Relaxed),
+            peripheral,
+            connected: watch::channel(false).0,
+            characs: vec![],
+            listeners: Arc::new(Mutex::new(vec![])),
+            listen_task: None,
+            on_disconnect: OnDisconnectHandler::None,
+            gatt_lock: Arc::new(Mutex::new(())),
+            temporary,
+        }
     }
 
-    fn get_charac_from_service(&self, uuid: Uuid, service: Uuid) -> Result<&Characteristic, Error> {
-        trace!("getting characteristic {uuid} from service {service}");
+    fn is_connected(&self) -> bool {
+        *self.connected.borrow()
+    }
+
+    fn get_charac(&self, uuid: Uuid, service: Option<Uuid>) -> Result<&Characteristic, Error> {
+        trace!("getting characteristic {uuid} from service {service:?}");
         let charac = self
             .characs
             .iter()
-            .find(|c| c.uuid == uuid && c.service_uuid == service);
+            .find(|c| c.uuid == uuid && service.map_or(true, |s| c.service_uuid == s));
         charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
     }
+}
+
+struct HandlerState {
+    connection_update_channel: Vec<mpsc::Sender<bool>>,
+    connection_event_channel: Vec<mpsc::Sender<ConnectionUpdate>>,
+    scan_update_channel: Vec<mpsc::Sender<bool>>,
+    scan_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct Handler {
@@ -69,13 +114,14 @@ pub struct Handler {
     adapter: Mutex<Option<Arc<Adapter>>>,
     /// Task forwarding the adapter's `CentralEvent`s to `handle_event`
     event_pump: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    notify_listeners: Arc<Mutex<Vec<Listener>>>,
-    connected_rx: watch::Receiver<bool>,
-    connected_tx: watch::Sender<bool>,
+    /// The links by address. A std mutex, so the synchronous getters can read
+    /// it; it is never held across an `.await`.
+    links: std::sync::Mutex<HashMap<String, Link>>,
+    /// Serializes connection attempts across devices: android's `connectGatt`
+    /// misbehaves with several connects in flight. Operations on links that
+    /// are already up do not take it.
+    connect_lock: Mutex<()>,
     state: Mutex<HandlerState>,
-    connected_dev: Mutex<Option<Peripheral>>,
-    /// Lock to serialize BLE GATT operations (only one read/write can be in flight at a time)
-    gatt_op_lock: Mutex<()>,
     timeouts: std::sync::Mutex<Timeouts>,
 
     write_timeout_in_ms: AtomicU32,
@@ -221,24 +267,18 @@ impl Handler {
     }
 
     fn with_adapter(adapter: Option<Arc<Adapter>>) -> Self {
-        let (connected_tx, connected_rx) = watch::channel(false);
         Self {
             devices: Arc::new(Mutex::new(HashMap::new())),
             adapter: Mutex::new(adapter),
             event_pump: Mutex::new(None),
-            notify_listeners: Arc::new(Mutex::new(vec![])),
-            connected_rx,
-            connected_tx,
-            connected_dev: Mutex::new(None),
-            gatt_op_lock: Mutex::new(()),
+            links: std::sync::Mutex::new(HashMap::new()),
+            connect_lock: Mutex::new(()),
             timeouts: std::sync::Mutex::new(Timeouts::default()),
             state: Mutex::new(HandlerState {
-                on_disconnect: OnDisconnectHandler::None,
                 connection_update_channel: vec![],
+                connection_event_channel: vec![],
                 scan_task: None,
                 scan_update_channel: vec![],
-                listen_handle: None,
-                characs: vec![],
             }),
             write_timeout_in_ms: AtomicU32::new(0),
             skip_waiting_for_write_to_complete: AtomicBool::new(false),
@@ -290,20 +330,92 @@ impl Handler {
         Ok(events)
     }
 
-    /// Returns true if a device is connected
-    pub fn is_connected(&self) -> bool {
-        *self.connected_rx.borrow()
+    /// The link table. Never hold the guard across an `.await`.
+    fn links(&self) -> std::sync::MutexGuard<'_, HashMap<String, Link>> {
+        self.links
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Returns mtu (Maximum Transfer Unit) of the currently connected device
+    /// Returns true if at least one device is connected
+    pub fn is_connected(&self) -> bool {
+        self.links()
+            .values()
+            .any(|link| !link.temporary && link.is_connected())
+    }
+
+    /// Returns true if the device with this address is connected
+    pub fn is_device_connected(&self, address: &str) -> bool {
+        self.links()
+            .get(address)
+            .is_some_and(|link| !link.temporary && link.is_connected())
+    }
+
+    /// The address of the only device connected (or being connected), which
+    /// the methods without an address parameter work on.
+    ///
     /// # Errors
-    /// Returns an error if no device is connected
+    /// [`Error::NoDeviceConnected`] without a device,
+    /// [`Error::MultipleDevicesConnected`] with more than one.
+    fn single_address(&self) -> Result<String, Error> {
+        let links = self.links();
+        let mut addresses = links
+            .iter()
+            .filter(|(_, link)| !link.temporary)
+            .map(|(address, _)| address);
+        match (addresses.next(), addresses.next()) {
+            (None, _) => Err(Error::NoDeviceConnected),
+            (Some(address), None) => Ok(address.clone()),
+            (Some(_), Some(_)) => Err(Error::MultipleDevicesConnected),
+        }
+    }
+
+    /// The peripheral of the link to `address`.
+    fn link_peripheral(&self, address: &str) -> Result<Peripheral, Error> {
+        self.links()
+            .get(address)
+            .filter(|link| !link.temporary)
+            .map(|link| link.peripheral.clone())
+            .ok_or_else(|| Error::DeviceNotConnected(address.to_string()))
+    }
+
+    /// The lock serializing the GATT operations on the link to `address`.
+    fn link_gatt_lock(&self, address: &str) -> Result<Arc<Mutex<()>>, Error> {
+        self.links()
+            .get(address)
+            .filter(|link| !link.temporary)
+            .map(|link| link.gatt_lock.clone())
+            .ok_or_else(|| Error::DeviceNotConnected(address.to_string()))
+    }
+
+    /// The peripheral and characteristic for an operation on `address`.
+    fn link_charac(
+        &self,
+        address: &str,
+        c: Uuid,
+        service: Option<Uuid>,
+    ) -> Result<(Peripheral, Characteristic), Error> {
+        let links = self.links();
+        let link = links
+            .get(address)
+            .filter(|link| !link.temporary)
+            .ok_or_else(|| Error::DeviceNotConnected(address.to_string()))?;
+        let charac = link.get_charac(c, service)?.clone();
+        Ok((link.peripheral.clone(), charac))
+    }
+
+    /// Returns mtu (Maximum Transfer Unit) of the connected device
+    /// # Errors
+    /// Returns an error if no device or more than one device is connected
     pub async fn mtu(&self) -> Result<u16, Error> {
-        let connected_dev = self.connected_dev.lock().await;
-        let Some(dev) = connected_dev.as_ref() else {
-            return Err(Error::NoDeviceConnected);
-        };
-        Ok(dev.mtu())
+        self.device_mtu(&self.single_address()?).await
+    }
+
+    /// Returns mtu (Maximum Transfer Unit) of the device with this address
+    /// # Errors
+    /// Returns an error if the device is not connected
+    pub async fn device_mtu(&self, address: &str) -> Result<u16, Error> {
+        Ok(self.link_peripheral(address)?.mtu())
     }
 
     /// Returns true if the adapter is scanning
@@ -333,6 +445,11 @@ impl Handler {
     }
 
     /// Takes a sender that will be used to send changes in the connection status
+    ///
+    /// After every connect and disconnect of any device it receives whether at
+    /// least one device is connected. Use
+    /// [`set_connection_event_channel`](Self::set_connection_event_channel)
+    /// to learn which device it was.
     /// # Example
     /// ```no_run
     /// use tokio::sync::mpsc;
@@ -349,19 +466,46 @@ impl Handler {
         self.state.lock().await.connection_update_channel.push(tx);
     }
 
+    /// Takes a sender that will receive a [`ConnectionUpdate`] whenever a
+    /// device connects or disconnects
+    /// # Example
+    /// ```no_run
+    /// use tokio::sync::mpsc;
+    /// # async fn example() {
+    ///     let handler = blec::get_handler().unwrap();
+    ///     let (tx, mut rx) = mpsc::channel(8);
+    ///     handler.set_connection_event_channel(tx).await;
+    ///     while let Some(update) = rx.recv().await {
+    ///         println!("{}: connected {}", update.address, update.connected);
+    ///     }
+    /// # }
+    /// ```
+    pub async fn set_connection_event_channel(&self, tx: mpsc::Sender<ConnectionUpdate>) {
+        self.state.lock().await.connection_event_channel.push(tx);
+    }
+
     /// Connects to the given address
+    ///
+    /// Devices that are already connected stay connected, so several devices
+    /// can be connected at the same time. Connecting to a device that is
+    /// already connected keeps the connection and replaces its disconnect
+    /// callback.
+    ///
     /// If a callback is provided, it will be called when the device is disconnected.
     /// Because connecting sometimes fails especially on android, this method tries up to 3 times
     /// before returning an error
+    ///
+    /// Returns a [`Connection`] to use the device with.
     /// # Errors
-    /// Returns an error if no devices are found, if the device is already connected,
-    /// if the connection fails, or if the service/characteristics discovery fails
+    /// Returns an error if no devices are found, if the connection fails, or if
+    /// the service/characteristics discovery fails
     /// # Example
     /// ```no_run
     /// use blec::OnDisconnectHandler;
     /// # async fn example() {
     ///    let handler = blec::get_handler().unwrap();
-    ///    handler.connect("00:00:00:00:00:00", OnDisconnectHandler::from_sync(|| println!("disconnected")), false).await.unwrap();
+    ///    let device = handler.connect("00:00:00:00:00:00", OnDisconnectHandler::from_sync(|| println!("disconnected")), false).await.unwrap();
+    ///    println!("mtu: {}", device.mtu().await.unwrap());
     /// # }
     /// ```
     pub async fn connect(
@@ -369,18 +513,16 @@ impl Handler {
         address: &str,
         on_disconnect: OnDisconnectHandler,
         allow_ibeacons: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<Connection, Error> {
+        let _connecting = self.connect_lock.lock().await;
         let mut device = self.resolve_peripheral(address, allow_ibeacons).await?;
         // cancel any running discovery
         let _ = self.stop_scan().await;
-        // Never leave a previous link open: connecting to a second device while
-        // the first one is still attached leaks an OS level GATT connection.
-        self.disconnect_other(address).await;
         // connect to the given address
         // try up to 3 times before returning an error
         let mut connected = Ok(());
         for i in 0..3 {
-            if let Err(e) = self.connect_device(address, device.clone()).await {
+            if let Err(e) = self.connect_device(address, device.clone(), false).await {
                 if i < 2 {
                     warn!("Failed to connect device, retrying in 1s: {e}");
                     sleep(Duration::from_secs(1)).await;
@@ -400,55 +542,63 @@ impl Handler {
             error!("Failed to connect device: {e}");
             // A `connectGatt` may still be pending; cancel it so the device is
             // not left half-connected.
-            let device = self.connected_dev.lock().await.clone();
-            if let Some(device) = device {
+            if let Ok(device) = self.link_peripheral(address) {
                 if let Err(e) = device.disconnect().await {
                     warn!("Failed to cancel the pending connection: {e}");
                 }
             }
-            self.clear_connection_state().await;
+            self.clear_link(address, None).await;
             return Err(e);
         }
         debug!("connecting services");
-        // discover service/characteristics (no state lock held during GATT op)
-        let characs = match self.connect_services().await {
+        // discover service/characteristics (no lock held during GATT op)
+        let characs = match self.connect_services(address).await {
             Ok(characs) => characs,
             Err(e) => {
                 // The link is up but unusable — tear it down instead of
                 // returning with a connected device the caller doesn't know about.
                 error!("Failed to discover services: {e}");
-                if let Err(e) = self.disconnect().await {
+                if let Err(e) = self.disconnect_device(address).await {
                     warn!("Failed to disconnect after failed service discovery: {e}");
                 }
                 return Err(e);
             }
         };
         {
-            debug!("locking state");
-            let mut state = self.state.lock().await;
+            let mut links = self.links();
+            let Some(link) = links.get_mut(address) else {
+                // the link dropped during service discovery and is cleared already
+                warn!("{address} disconnected during service discovery");
+                return Err(Error::ConnectionFailed);
+            };
             // set callback to run on disconnect
-            state.on_disconnect = on_disconnect;
-            state.characs = characs;
+            link.on_disconnect = on_disconnect;
+            link.characs = characs;
             debug!("Starting notification task");
-            // start background task for notifications
-            state.listen_handle = Some(tokio::task::spawn(listen_notify(
-                self.connected_dev.lock().await.clone(),
-                self.notify_listeners.clone(),
+            // start background task for notifications, replacing the one of
+            // a connection that is reused
+            if let Some(task) = link.listen_task.take() {
+                task.abort();
+            }
+            link.listen_task = Some(tokio::task::spawn(listen_notify(
+                link.peripheral.clone(),
+                link.listeners.clone(),
             )));
         }
-        self.send_connection_update(true).await;
-        info!("connecting done");
-        Ok(())
+        self.send_connection_update(address, true).await;
+        info!("connecting to {address} done");
+        Ok(Connection::new(self, address))
     }
 
-    async fn connect_services(&self) -> Result<Vec<Characteristic>, Error> {
-        let device = {
-            let dev = self.connected_dev.lock().await;
-            dev.as_ref().ok_or(Error::NoDeviceConnected)?.clone()
+    async fn connect_services(&self, address: &str) -> Result<Vec<Characteristic>, Error> {
+        let (device, gatt_lock) = {
+            let links = self.links();
+            let link = links.get(address).ok_or(Error::NoDeviceConnected)?;
+            (link.peripheral.clone(), link.gatt_lock.clone())
         };
         debug!("starting service discovery");
         {
-            let _gatt_guard = self.gatt_op_lock.lock().await;
+            let _gatt_guard = gatt_lock.lock().await;
             run_with_timeout(
                 device.discover_services(),
                 "discover services",
@@ -468,7 +618,10 @@ impl Handler {
 
     /// The peripheral for `address`, one the backend still knows about.
     ///
-    /// [`Self::devices`] maps addresses to the peripheral a scan last reported
+    /// A device with a link uses the link's peripheral: a connected device
+    /// usually stops advertising, so the next scan would forget it.
+    ///
+    /// Otherwise [`Self::devices`] maps addresses to the peripheral a scan last reported
     /// for them, and that mapping outlives the backend's own record of the
     /// peripheral: CoreBluetooth forgets a peripheral as soon as its link goes
     /// down, and the android side clears its device map whenever a scan starts.
@@ -482,6 +635,13 @@ impl Handler {
         address: &str,
         allow_ibeacons: bool,
     ) -> Result<Peripheral, Error> {
+        let linked = self
+            .links()
+            .get(address)
+            .map(|link| link.peripheral.clone());
+        if let Some(device) = linked {
+            return Ok(device);
+        }
         let known = self.devices.lock().await.get(address).cloned();
         let device = match known {
             Some(device) => device,
@@ -559,24 +719,33 @@ impl Handler {
         while rx.recv().await.is_some() {}
     }
 
-    async fn connect_device(&self, address: &str, device: Peripheral) -> Result<(), Error> {
+    /// Opens the link to `address`, registering it before the connect so
+    /// `handle_connect` can match the adapter's event to it.
+    async fn connect_device(
+        &self,
+        address: &str,
+        device: Peripheral,
+        temporary: bool,
+    ) -> Result<(), Error> {
         trace!("connect_device: initiating connection to {address}");
         debug!("connecting to {address}",);
-        let mut connected_rx = self.connected_rx.clone();
-        {
-            *self.connected_dev.lock().await = Some(device.clone());
-            if device.is_connected().await? {
-                debug!("Device already connected");
-                self.connected_tx
-                    .send(true)
-                    .expect("failed to send connected update");
-                return Ok(());
-            }
+        let (mut connected_rx, gatt_lock) = {
+            let mut links = self.links();
+            let link = links
+                .entry(address.to_string())
+                .or_insert_with(|| Link::new(device.clone(), temporary));
+            link.peripheral = device.clone();
+            (link.connected.subscribe(), link.gatt_lock.clone())
+        };
+        if device.is_connected().await? {
+            debug!("Device already connected");
+            self.set_link_connected(address, device);
+            return Ok(());
         }
         debug!("Connecting to device");
         let timeout = self.timeouts().connect;
         {
-            let _gatt_guard = self.gatt_op_lock.lock().await;
+            let _gatt_guard = gatt_lock.lock().await;
             run_with_timeout(device.connect(), "Connect", timeout).await?;
         }
         // wait for the actual connection to be established
@@ -599,56 +768,87 @@ impl Handler {
                 }
             }
         }
-        if !*self.connected_rx.borrow() {
+        if !*connected_rx.borrow() {
             // still not connected
             warn!("Still not connected after connection event");
             return Err(Error::ConnectionFailed);
+        }
+        // keep the instance `connect()` ran on, see `Link::peripheral`
+        if let Some(link) = self.links().get_mut(address) {
+            link.peripheral = device;
         }
         trace!("connect_device: connection established to {address}");
         info!("device connected");
         Ok(())
     }
 
-    /// Disconnects a currently connected device unless it is the one at
-    /// `address` and still actually connected. Best effort: errors are logged.
-    async fn disconnect_other(&self, address: &str) {
-        let device = self.connected_dev.lock().await.clone();
-        let Some(device) = device else {
-            return;
-        };
-        if fmt_addr(device.address()) == address && device.is_connected().await.unwrap_or(false) {
-            // `connect_device` reuses this connection
-            return;
-        }
-        info!(
-            "disconnecting {} before connecting to {address}",
-            fmt_addr(device.address())
-        );
-        if let Err(e) = self.disconnect().await {
-            warn!("Failed to disconnect the previously connected device: {e}");
+    /// Marks the link to `address` as up, adopting `device` as its peripheral.
+    fn set_link_connected(&self, address: &str, device: Peripheral) {
+        if let Some(link) = self.links().get_mut(address) {
+            link.peripheral = device;
+            link.connected.send_replace(true);
         }
     }
 
-    /// Drops every trace of a connection: forgets the device, stops the
-    /// notification task, clears the characteristics and listeners, runs the
-    /// disconnect callback and reports the new state to all listeners.
-    async fn clear_connection_state(&self) {
-        *self.connected_dev.lock().await = None;
-        *self.notify_listeners.lock().await = vec![];
-        {
-            // scope: `send_connection_update` needs the state lock as well
-            let mut state = self.state.lock().await;
-            if let Some(handle) = state.listen_handle.take() {
-                handle.abort();
+    /// Drops every trace of the link to `address`: stops its notification
+    /// task, runs its disconnect callback and reports the new state to all
+    /// listeners. With `only`, a link with a different id is left alone.
+    async fn clear_link(&self, address: &str, only: Option<u64>) {
+        let link = {
+            let mut links = self.links();
+            if only.is_some_and(|id| links.get(address).is_some_and(|link| link.id != id)) {
+                debug!("{address} was reconnected meanwhile, keeping the new link");
+                return;
             }
-            state.on_disconnect.take().run().await;
-            state.characs.clear();
+            links.remove(address)
+        };
+        let Some(mut link) = link else {
+            return;
+        };
+        if let Some(task) = link.listen_task.take() {
+            task.abort();
         }
-        self.send_connection_update(false).await;
-        let _ = self.connected_tx.send(false);
+        link.on_disconnect.take().run().await;
+        if !link.temporary {
+            self.send_connection_update(address, false).await;
+        }
+        // last, so whoever waits for the disconnect finds everything above done
+        link.connected.send_replace(false);
     }
 
     /// Disconnects from the connected device
+    ///
+    /// # Errors
+    /// Returns an error if no device or more than one device is connected,
+    /// see [`disconnect_device`](Self::disconnect_device) for the rest.
+    pub async fn disconnect(&self) -> Result<(), Error> {
+        self.disconnect_device(&self.single_address()?).await
+    }
+
+    /// Disconnects every connected device
+    ///
+    /// # Errors
+    /// Returns the first error a disconnect failed with, after trying all of them
+    pub async fn disconnect_all(&self) -> Result<(), Error> {
+        let addresses: Vec<String> = self
+            .links()
+            .iter()
+            .filter(|(_, link)| !link.temporary)
+            .map(|(address, _)| address.clone())
+            .collect();
+        let mut result = Ok(());
+        for address in addresses {
+            if let Err(e) = self.disconnect_device(&address).await {
+                warn!("Failed to disconnect {address}: {e}");
+                if result.is_ok() {
+                    result = Err(e);
+                }
+            }
+        }
+        result
+    }
+
+    /// Disconnects from the device with this address
     /// This triggers a disconnect and then waits for the actual disconnect event from the adapter.
     ///
     /// The disconnect is always attempted on the peripheral, even when the
@@ -656,18 +856,21 @@ impl Handler {
     /// be out of sync with a still open GATT link. A state desync is therefore
     /// repaired instead of reported, and only a missing device is an error.
     /// # Errors
-    /// Returns an error if no device is connected
-    pub async fn disconnect(&self) -> Result<(), Error> {
-        trace!("disconnect: user-initiated disconnect");
-        info!("disconnect triggered by user");
-        let mut connected_rx = self.connected_rx.clone();
-        let was_connected = *connected_rx.borrow_and_update();
+    /// Returns an error if the device is not connected
+    pub async fn disconnect_device(&self, address: &str) -> Result<(), Error> {
+        trace!("disconnect: user-initiated disconnect of {address}");
+        info!("disconnect of {address} triggered by user");
         // Clone: the lock must not be held while waiting for the disconnect event
-        let dev = self.connected_dev.lock().await.clone();
-        let Some(dev) = dev else {
-            debug!("no device connected");
-            return Err(Error::NoDeviceConnected);
+        let link = self
+            .links()
+            .get(address)
+            .filter(|link| !link.temporary)
+            .map(|link| (link.id, link.peripheral.clone(), link.connected.subscribe()));
+        let Some((id, dev, mut connected_rx)) = link else {
+            debug!("{address} not connected");
+            return Err(Error::DeviceNotConnected(address.to_string()));
         };
+        let was_connected = *connected_rx.borrow_and_update();
         let is_connected = dev.is_connected().await.unwrap_or(false);
         if let Err(e) = dev.disconnect().await {
             warn!("Failed to trigger disconnect: {e}");
@@ -676,41 +879,43 @@ impl Handler {
             // No disconnect event will arrive because the adapter doesn't
             // consider the device connected anymore. Repair the state.
             warn!("device was already disconnected, clearing connection state");
-            self.clear_connection_state().await;
+            self.clear_link(address, Some(id)).await;
             return Ok(());
         }
         // the change will be triggered by handle_event -> handle_disconnect which runs in another
         // task
         let timeout = self.timeouts().disconnect;
         match tokio::time::timeout(timeout, connected_rx.changed()).await {
-            Ok(Ok(())) if !*self.connected_rx.borrow() => return Ok(()),
+            Ok(_) if !*connected_rx.borrow() => return Ok(()),
             Ok(Ok(())) => warn!("still connected after the disconnect event"),
             Ok(Err(e)) => warn!("disconnect event channel closed: {e}"),
             Err(_) => warn!("timed out waiting for the disconnect event"),
         }
         // The platform side closes the GATT link on its own; make sure our
         // state agrees so the next connect isn't blocked by a stale device.
-        self.clear_connection_state().await;
+        self.clear_link(address, Some(id)).await;
         Ok(())
+    }
+
+    /// The address of the link to the peripheral with this id.
+    fn link_address(&self, peripheral_id: &PeripheralId) -> Option<String> {
+        self.links()
+            .iter()
+            .find(|(_, link)| link.peripheral.id() == *peripheral_id)
+            .map(|(address, _)| address.clone())
     }
 
     /// Clears internal state, updates connected flag and calls disconnect callback
     async fn handle_disconnect(&self, peripheral_id: PeripheralId) -> Result<(), Error> {
         trace!("handle_disconnect: DeviceDisconnected event for {peripheral_id}");
         info!("Handling disconnect for {peripheral_id}");
-        let connected = self
-            .connected_dev
-            .lock()
-            .await
-            .as_ref()
-            .map(btleplug::api::Peripheral::id);
-        if !connected.as_ref().is_some_and(|c| *c == peripheral_id) {
-            // event not for currently connected device, ignore
-            warn!("Unexpected disconnect event for device {peripheral_id}, connected device is {connected:?}",);
+        let Some(address) = self.link_address(&peripheral_id) else {
+            // event not for a device we are connected to, ignore
+            warn!("Unexpected disconnect event for device {peripheral_id}, no link to it");
             return Ok(());
-        }
-        info!("disconnecting");
-        self.clear_connection_state().await;
+        };
+        info!("disconnecting {address}");
+        self.clear_link(&address, None).await;
         Ok(())
     }
 
@@ -806,39 +1011,70 @@ impl Handler {
     /// After the discovery is done, the device is disconnected
     /// If the devices was already connected, it will stay connected
     /// An address that is not known yet is scanned for, like [`Self::connect`] does
+    ///
+    /// The connection made only for the discovery is not reported as a
+    /// connection and does not affect the other connected devices.
     /// # Errors
     /// Returns an error if the device is not found, if the connection fails, or if the discovery fails
-    /// # Panics
-    /// Panics if there is an error with the internal disconnect event
     pub async fn discover_services(&'static self, address: &str) -> Result<Vec<Service>, Error> {
-        let mut already_connected = self
-            .connected_dev
-            .lock()
-            .await
-            .as_ref()
-            .is_some_and(|dev| address == fmt_addr(dev.address()));
-        let device = if already_connected {
-            self.connected_dev
-                .lock()
-                .await
-                .as_ref()
-                .expect("Connection exists")
-                .clone()
-        } else {
-            let device = self.resolve_peripheral(address, false).await?;
-            if device.is_connected().await? {
-                already_connected = true;
-            } else if let Err(e) = self.connect_device(address, device.clone()).await {
-                *self.connected_dev.lock().await = None;
-                let _ = self.connected_tx.send(false);
-                error!("Failed to connect for discovery: {e}");
-                return Err(e);
-            }
-            device
+        let linked = self
+            .links()
+            .get(address)
+            .filter(|link| !link.temporary && link.is_connected())
+            .map(|link| (link.peripheral.clone(), link.gatt_lock.clone()));
+        if let Some((device, gatt_lock)) = linked {
+            debug!("discovering services on connected {address}");
+            return self.read_services(&device, &gatt_lock).await;
+        }
+
+        let _connecting = self.connect_lock.lock().await;
+        let device = self.resolve_peripheral(address, false).await?;
+        if device.is_connected().await? {
+            // connected, but not by us: leave it that way
+            return self.read_services(&device, &Arc::new(Mutex::new(()))).await;
+        }
+        if let Err(e) = self.connect_device(address, device.clone(), true).await {
+            error!("Failed to connect for discovery: {e}");
+            self.clear_link(address, None).await;
+            return Err(e);
+        }
+        let (id, device, gatt_lock, mut connected_rx) = {
+            let links = self.links();
+            let link = links.get(address).ok_or(Error::ConnectionFailed)?;
+            (
+                link.id,
+                link.peripheral.clone(),
+                link.gatt_lock.clone(),
+                link.connected.subscribe(),
+            )
         };
         debug!("discovering services on {address}");
+        let services = self.read_services(&device, &gatt_lock).await;
+        if *connected_rx.borrow_and_update() {
+            if let Err(e) = device.disconnect().await {
+                warn!("Failed to disconnect after the discovery: {e}");
+            }
+            debug!("waiting for disconnect event");
+            let timeout = self.timeouts().disconnect;
+            if tokio::time::timeout(timeout, connected_rx.changed())
+                .await
+                .is_err()
+            {
+                warn!("timed out waiting for the disconnect event after the discovery");
+            }
+        }
+        self.clear_link(address, Some(id)).await;
+        services
+    }
+
+    /// The services of `device`, discovering them first if needed.
+    async fn read_services(
+        &self,
+        device: &Peripheral,
+        gatt_lock: &Mutex<()>,
+    ) -> Result<Vec<Service>, Error> {
         if device.services().is_empty() {
-            let _gatt_guard = self.gatt_op_lock.lock().await;
+            let _gatt_guard = gatt_lock.lock().await;
             run_with_timeout(
                 device.discover_services(),
                 "discover services",
@@ -846,19 +1082,7 @@ impl Handler {
             )
             .await?;
         }
-        let services = device.services().iter().map(Service::from).collect();
-        if !already_connected {
-            let mut connected_rx = self.connected_rx.clone();
-            if *connected_rx.borrow_and_update() {
-                device.disconnect().await?;
-                debug!("waiting for disconnect event");
-                connected_rx
-                    .changed()
-                    .await
-                    .expect("failed to wait for disconnect event");
-            }
-        }
-        Ok(services)
+        Ok(device.services().iter().map(Service::from).collect())
     }
 
     /// Stops scanning for devices
@@ -898,8 +1122,8 @@ impl Handler {
 
     /// Sends data to the given characteristic of the connected device
     /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    /// or if the write operation fails
+    /// Returns an error if no device or more than one device is connected,
+    /// see [`send_data_to`](Self::send_data_to) for the rest
     /// # Example
     /// ```no_run
     /// use uuid::{Uuid,uuid};
@@ -919,25 +1143,27 @@ impl Handler {
         data: &[u8],
         write_type: models::WriteType,
     ) -> Result<(), Error> {
-        let _gatt_guard = self.gatt_op_lock.lock().await;
-        let dev = {
-            let dev_guard = self.connected_dev.lock().await;
-            dev_guard
-                .as_ref()
-                .cloned()
-                .ok_or(Error::NoDeviceConnected)?
-        };
-        let charac = {
-            let state = self.state.lock().await;
-            if let Some(service) = service {
-                state.get_charac_from_service(c, service)?.clone()
-            } else {
-                state.get_charac(c)?.clone()
-            }
-        };
+        self.send_data_to(&self.single_address()?, c, service, data, write_type)
+            .await
+    }
 
+    /// Sends data to the given characteristic of the device with this address
+    /// # Errors
+    /// Returns an error if the device is not connected or the characteristic is not available
+    /// or if the write operation fails
+    pub async fn send_data_to(
+        &self,
+        address: &str,
+        c: Uuid,
+        service: Option<Uuid>,
+        data: &[u8],
+        write_type: models::WriteType,
+    ) -> Result<(), Error> {
+        let gatt_lock = self.link_gatt_lock(address)?;
+        let _gatt_guard = gatt_lock.lock().await;
+        let (dev, charac) = self.link_charac(address, c, service)?;
         trace!(
-            "sending {} bytes to characteristic {c}: {:02x?}",
+            "sending {} bytes to characteristic {c} of {address}: {:02x?}",
             data.len(),
             data
         );
@@ -953,8 +1179,8 @@ impl Handler {
     /// Receives data from the given characteristic of the connected device
     /// Returns the data as a vector of bytes
     /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    /// or if the read operation fails
+    /// Returns an error if no device or more than one device is connected,
+    /// see [`recv_data_from`](Self::recv_data_from) for the rest
     /// # Example
     /// ```no_run
     /// use uuid::{Uuid,uuid};
@@ -965,36 +1191,38 @@ impl Handler {
     /// # }
     /// ```
     pub async fn recv_data(&self, c: Uuid, service: Option<Uuid>) -> Result<Vec<u8>, Error> {
-        let _gatt_guard = self.gatt_op_lock.lock().await;
-        let dev = {
-            let dev_guard = self.connected_dev.lock().await;
-            dev_guard
-                .as_ref()
-                .cloned()
-                .ok_or(Error::NoDeviceConnected)?
-        };
-        let charac = {
-            let state = self.state.lock().await;
-            if let Some(service) = service {
-                state.get_charac_from_service(c, service)?.clone()
-            } else {
-                state.get_charac(c)?.clone()
-            }
-        };
+        self.recv_data_from(&self.single_address()?, c, service)
+            .await
+    }
+
+    /// Receives data from the given characteristic of the device with this address
+    /// Returns the data as a vector of bytes
+    /// # Errors
+    /// Returns an error if the device is not connected or the characteristic is not available
+    /// or if the read operation fails
+    pub async fn recv_data_from(
+        &self,
+        address: &str,
+        c: Uuid,
+        service: Option<Uuid>,
+    ) -> Result<Vec<u8>, Error> {
+        let gatt_lock = self.link_gatt_lock(address)?;
+        let _gatt_guard = gatt_lock.lock().await;
+        let (dev, charac) = self.link_charac(address, c, service)?;
         let data = run_with_timeout(dev.read(&charac), "read", self.timeouts().read).await?;
         trace!(
-            "received {} bytes from characteristic {c}: {:02x?}",
+            "received {} bytes from characteristic {c} of {address}: {:02x?}",
             data.len(),
             data
         );
         Ok(data)
     }
 
-    /// Subscribe to notifications from the given characteristic
+    /// Subscribe to notifications from the given characteristic of the connected device
     /// The callback will be called whenever a notification is received
     /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    /// or if the subscribe operation fails
+    /// Returns an error if no device or more than one device is connected,
+    /// see [`subscribe_to`](Self::subscribe_to) for the rest
     /// # Example
     /// ```no_run
     /// use uuid::{Uuid,uuid};
@@ -1010,23 +1238,27 @@ impl Handler {
         service: Option<Uuid>,
         callback: impl Into<SubscriptionHandler>,
     ) -> Result<(), Error> {
-        let _gatt_guard = self.gatt_op_lock.lock().await;
-        let dev = {
-            let dev_guard = self.connected_dev.lock().await;
-            dev_guard
-                .as_ref()
-                .cloned()
-                .ok_or(Error::NoDeviceConnected)?
-        };
-        let charac = {
-            let state = self.state.lock().await;
-            if let Some(service) = service {
-                state.get_charac_from_service(c, service)?.clone()
-            } else {
-                state.get_charac(c)?.clone()
-            }
-        };
-        info!("subscribing to characteristic {charac:?}");
+        self.subscribe_to(&self.single_address()?, c, service, callback)
+            .await
+    }
+
+    /// Subscribe to notifications from the given characteristic of the device with this address
+    /// The callback will be called whenever a notification is received, until
+    /// the device disconnects
+    /// # Errors
+    /// Returns an error if the device is not connected or the characteristic is not available
+    /// or if the subscribe operation fails
+    pub async fn subscribe_to(
+        &self,
+        address: &str,
+        c: Uuid,
+        service: Option<Uuid>,
+        callback: impl Into<SubscriptionHandler>,
+    ) -> Result<(), Error> {
+        let gatt_lock = self.link_gatt_lock(address)?;
+        let _gatt_guard = gatt_lock.lock().await;
+        let (dev, charac) = self.link_charac(address, c, service)?;
+        info!("subscribing to characteristic {charac:?} of {address}");
         run_with_timeout(
             dev.subscribe(&charac),
             "subscribe",
@@ -1034,7 +1266,12 @@ impl Handler {
         )
         .await?;
         info!("subscribed successfully");
-        self.notify_listeners.lock().await.push(Listener {
+        let listeners = self
+            .links()
+            .get(address)
+            .map(|link| link.listeners.clone())
+            .ok_or_else(|| Error::DeviceNotConnected(address.to_string()))?;
+        listeners.lock().await.push(Listener {
             uuid: charac.uuid,
             service: charac.service_uuid,
             callback: callback.into(),
@@ -1042,32 +1279,44 @@ impl Handler {
         Ok(())
     }
 
-    /// Unsubscribe from notifications for the given characteristic
+    /// Unsubscribe from notifications for the given characteristic of the connected device
     /// This will also remove the callback from the list of listeners
     /// # Errors
-    /// Returns an error if no device is connected or the characteristic is not available
-    /// or if the unsubscribe operation fails
+    /// Returns an error if no device or more than one device is connected,
+    /// see [`unsubscribe_from`](Self::unsubscribe_from) for the rest
     pub async fn unsubscribe(&self, c: Uuid) -> Result<(), Error> {
-        let _gatt_guard = self.gatt_op_lock.lock().await;
-        let dev = {
-            let dev_guard = self.connected_dev.lock().await;
-            dev_guard
-                .as_ref()
-                .cloned()
-                .ok_or(Error::NoDeviceConnected)?
-        };
-        let charac = {
-            let state = self.state.lock().await;
-            state.get_charac(c)?.clone()
-        };
+        self.unsubscribe_from(&self.single_address()?, c, None)
+            .await
+    }
+
+    /// Unsubscribe from notifications for the given characteristic of the device with this address
+    /// This will also remove the callbacks from the list of listeners. Without
+    /// a `service`, the callbacks of the characteristic in every service are removed.
+    /// # Errors
+    /// Returns an error if the device is not connected or the characteristic is not available
+    /// or if the unsubscribe operation fails
+    pub async fn unsubscribe_from(
+        &self,
+        address: &str,
+        c: Uuid,
+        service: Option<Uuid>,
+    ) -> Result<(), Error> {
+        let gatt_lock = self.link_gatt_lock(address)?;
+        let _gatt_guard = gatt_lock.lock().await;
+        let (dev, charac) = self.link_charac(address, c, service)?;
         run_with_timeout(
             dev.unsubscribe(&charac),
             "unsubscribe",
             self.timeouts().subscribe,
         )
         .await?;
-        let mut listeners = self.notify_listeners.lock().await;
-        listeners.retain(|l| l.uuid != charac.uuid);
+        let listeners = self.links().get(address).map(|link| link.listeners.clone());
+        if let Some(listeners) = listeners {
+            listeners
+                .lock()
+                .await
+                .retain(|l| l.uuid != charac.uuid || service.is_some_and(|s| l.service != s));
+        }
         Ok(())
     }
 
@@ -1092,43 +1341,80 @@ impl Handler {
     }
 
     async fn handle_adapter_powered_off(&self) {
-        if self.connected_dev.lock().await.is_none() {
+        let addresses: Vec<String> = self.links().keys().cloned().collect();
+        if addresses.is_empty() {
             return;
         }
         warn!("adapter powered off while connected, clearing connection state");
-        self.clear_connection_state().await;
+        for address in addresses {
+            self.clear_link(&address, None).await;
+        }
     }
 
     /// Returns the connected device
     /// # Errors
-    /// Returns an error if no device is connected
+    /// Returns an error if no device or more than one device is connected
     pub async fn connected_device(&self) -> Result<BleDevice, Error> {
-        let p = self.connected_dev.lock().await;
-        let p = p.as_ref().ok_or(Error::NoDeviceConnected)?;
-        let d = BleDevice::from_peripheral(p).await?;
+        let p = self.link_peripheral(&self.single_address()?)?;
+        let d = BleDevice::from_peripheral(&p).await?;
         Ok(d)
+    }
+
+    /// Returns the connected device with this address
+    /// # Errors
+    /// Returns an error if the device is not connected
+    pub async fn connected_device_at(&self, address: &str) -> Result<BleDevice, Error> {
+        let p = self.link_peripheral(address)?;
+        let d = BleDevice::from_peripheral(&p).await?;
+        Ok(d)
+    }
+
+    /// Returns all connected devices, sorted by address
+    pub async fn connected_devices(&self) -> Vec<BleDevice> {
+        let peripherals: Vec<Peripheral> = self
+            .links()
+            .values()
+            .filter(|link| !link.temporary && link.is_connected())
+            .map(|link| link.peripheral.clone())
+            .collect();
+        let mut devices = vec![];
+        for p in peripherals {
+            match BleDevice::from_peripheral(&p).await {
+                Ok(device) => devices.push(device),
+                Err(e) => warn!("Failed to read connected device: {e}"),
+            }
+        }
+        devices.sort();
+        devices
+    }
+
+    /// A [`Connection`] to the device with this address, for a device that
+    /// was connected with [`connect`](Self::connect)
+    /// # Errors
+    /// Returns an error if the device is not connected
+    pub fn connection(&'static self, address: &str) -> Result<Connection, Error> {
+        self.link_peripheral(address)?;
+        Ok(Connection::new(self, address))
     }
 
     #[allow(clippy::redundant_closure_for_method_calls)]
     async fn handle_connect(&self, peripheral_id: PeripheralId) {
-        let connected_device = self.connected_dev.lock().await.as_ref().map(|d| d.id());
-        if let Some(connected_device) = connected_device {
-            if connected_device == peripheral_id {
+        {
+            let links = self.links();
+            let link = links
+                .iter()
+                .find(|(_, link)| link.peripheral.id() == peripheral_id);
+            if let Some((address, link)) = link {
                 trace!("handle_connect: DeviceConnected event for {peripheral_id}");
-                debug!("connection to {peripheral_id} established");
-                self.connected_tx
-                    .send(true)
-                    .expect("failed to send connected update");
-                debug!("connected_tx updated");
+                debug!("connection to {address} ({peripheral_id}) established");
+                link.connected.send_replace(true);
                 return;
             }
-            error!("Unexpected connect event for device {peripheral_id}, connected device is {connected_device}");
-        } else {
-            // Nobody is waiting for this connection — typically a `connect()`
-            // that already gave up, whose `connectGatt` completed afterwards.
-            // Adopting it would leave `connected_tx` false with an open link.
-            warn!("Connect event for {peripheral_id} without a pending connection");
         }
+        // Nobody is waiting for this connection — typically a `connect()`
+        // that already gave up, whose `connectGatt` completed afterwards.
+        // Adopting it would leave the handler unaware of an open link.
+        warn!("Connect event for {peripheral_id} without a pending connection");
         self.disconnect_peripheral(&peripheral_id).await;
     }
 
@@ -1152,16 +1438,30 @@ impl Handler {
         }
     }
 
-    async fn send_connection_update(&self, state: bool) {
-        let tx = &mut self.state.lock().await.connection_update_channel;
-        info!("sending connection update to {} listeners", tx.len());
-        let mut remove = vec![];
-        for (i, t) in tx.iter_mut().enumerate() {
-            if let Err(e) = t.send(state).await {
+    /// Reports that the device at `address` connected or disconnected.
+    async fn send_connection_update(&self, address: &str, connected: bool) {
+        let any_connected = connected || self.is_connected();
+        let update = ConnectionUpdate {
+            address: address.to_string(),
+            connected,
+        };
+        let mut state = self.state.lock().await;
+        info!(
+            "sending connection update to {} listeners",
+            state.connection_update_channel.len() + state.connection_event_channel.len()
+        );
+        for t in &state.connection_update_channel {
+            if let Err(e) = t.send(any_connected).await {
                 warn!("Failed to send connection update: {e}");
-                remove.push(i);
             }
         }
+        for t in &state.connection_event_channel {
+            if let Err(e) = t.send(update.clone()).await {
+                warn!("Failed to send connection event: {e}");
+            }
+        }
+        state.connection_update_channel.retain(|t| !t.is_closed());
+        state.connection_event_channel.retain(|t| !t.is_closed());
     }
 
     async fn send_scan_update(&self, state: bool) {
@@ -1273,12 +1573,14 @@ async fn filter_peripherals(discovered: &mut Vec<Peripheral>, filter: &ScanFilte
     }
 }
 
-async fn listen_notify(dev: Option<Peripheral>, listeners: Arc<Mutex<Vec<Listener>>>) {
-    let mut stream = dev
-        .expect("no device connected")
-        .notifications()
-        .await
-        .expect("failed to get notifications stream");
+async fn listen_notify(dev: Peripheral, listeners: Arc<Mutex<Vec<Listener>>>) {
+    let mut stream = match dev.notifications().await {
+        Ok(stream) => stream,
+        Err(e) => {
+            error!("failed to get notifications stream: {e}");
+            return;
+        }
+    };
     while let Some(data) = stream.next().await {
         debug!(
             "notification received, listeners: {}",
