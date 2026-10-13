@@ -102,7 +102,7 @@ async fn connect_step(
         }
         model.handler_connected = true;
     }
-    result
+    result.map(|_| ())
 }
 
 /// The invariants that must hold whenever no operation is in flight.

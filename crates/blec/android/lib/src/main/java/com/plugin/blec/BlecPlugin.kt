@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /** Arbitrary; nobody owns the Activity, so the result is never delivered to us. */
 private const val PERMISSION_REQUEST_CODE = 0xB1EC
@@ -24,11 +25,15 @@ private fun result(value: Any): JSONObject = JSONObject().put("result", value)
  * therefore goes through [currentActivity].
  */
 class BlecPlugin(private val context: Context) {
+    // Concurrent maps: commands arrive on whatever Rust thread invokes them,
+    // operations on one device run while another connects, and scan results
+    // are written from the main thread.
+
     /** The peripherals the last scan reported, by address. */
-    var devices: MutableMap<String, Peripheral> = mutableMapOf()
+    var devices: MutableMap<String, Peripheral> = ConcurrentHashMap()
 
     /** The peripherals with a `BluetoothGatt`, which must not be replaced. */
-    var connected_devices: MutableMap<String, Peripheral> = mutableMapOf()
+    var connected_devices: MutableMap<String, Peripheral> = ConcurrentHashMap()
 
     var eventChannel: Channel? = null
 

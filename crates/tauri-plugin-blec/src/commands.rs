@@ -4,7 +4,9 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use blec::models::{AdapterState, BleDevice, ScanFilter, Service, TimeoutsMs, WriteType};
+use blec::models::{
+    AdapterState, BleDevice, ConnectionUpdate, ScanFilter, Service, TimeoutsMs, WriteType,
+};
 use blec::OnDisconnectHandler;
 use blec::Result;
 
@@ -64,12 +66,33 @@ pub(crate) async fn connect<R: Runtime>(
     Ok(())
 }
 
+/// Without an address, the commands below work on the only connected device.
 #[command]
-pub(crate) async fn disconnect<R: Runtime>(_app: AppHandle<R>) -> Result<()> {
-    tracing::info!("Disconnecting from BLE device");
+pub(crate) async fn disconnect<R: Runtime>(
+    _app: AppHandle<R>,
+    address: Option<String>,
+) -> Result<()> {
+    tracing::info!("Disconnecting from BLE device {address:?}");
     let handler = crate::handler().await?;
-    handler.disconnect().await?;
+    match address {
+        Some(address) => handler.disconnect_device(&address).await?,
+        None => handler.disconnect().await?,
+    }
     Ok(())
+}
+
+#[command]
+pub(crate) async fn disconnect_all<R: Runtime>(_app: AppHandle<R>) -> Result<()> {
+    tracing::info!("Disconnecting from all BLE devices");
+    let handler = crate::handler().await?;
+    handler.disconnect_all().await?;
+    Ok(())
+}
+
+#[command]
+pub(crate) async fn connected_devices<R: Runtime>(_app: AppHandle<R>) -> Result<Vec<BleDevice>> {
+    let handler = crate::handler().await?;
+    Ok(handler.connected_devices().await)
 }
 
 #[command]
@@ -91,6 +114,26 @@ pub(crate) async fn connection_state<R: Runtime>(
             }
         }
         warn!("Connection state channel closed");
+    });
+    Ok(())
+}
+
+#[command]
+pub(crate) async fn connection_events<R: Runtime>(
+    _app: AppHandle<R>,
+    update: Channel<ConnectionUpdate>,
+) -> Result<()> {
+    let handler = crate::handler().await?;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    handler.set_connection_event_channel(tx).await;
+    async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            if let Err(e) = update.send(event) {
+                warn!("Failed to send connection event to the front-end: {e}");
+                return;
+            }
+        }
+        warn!("Connection event channel closed");
     });
     Ok(())
 }
@@ -120,75 +163,103 @@ pub(crate) async fn scanning_state<R: Runtime>(
 #[command]
 pub(crate) async fn send<R: Runtime>(
     _app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
     data: Vec<u8>,
     write_type: WriteType,
 ) -> Result<()> {
-    info!("Sending data: {data:?}");
+    info!("Sending data to {address:?}: {data:?}");
     let handler = crate::handler().await?;
-    handler
-        .send_data(characteristic, service, &data, write_type)
-        .await?;
+    match address {
+        Some(address) => {
+            handler
+                .send_data_to(&address, characteristic, service, &data, write_type)
+                .await?;
+        }
+        None => {
+            handler
+                .send_data(characteristic, service, &data, write_type)
+                .await?;
+        }
+    }
     Ok(())
 }
 
 #[command]
 pub(crate) async fn recv<R: Runtime>(
     _app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
 ) -> Result<Vec<u8>> {
     let handler = crate::handler().await?;
-    let data = handler.recv_data(characteristic, service).await?;
+    let data = match address {
+        Some(address) => {
+            handler
+                .recv_data_from(&address, characteristic, service)
+                .await?
+        }
+        None => handler.recv_data(characteristic, service).await?,
+    };
     Ok(data)
 }
 
 #[command]
 pub(crate) async fn send_string<R: Runtime>(
     app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
     data: String,
     write_type: WriteType,
 ) -> Result<()> {
     let data = data.as_bytes().to_vec();
-    send(app, characteristic, service, data, write_type).await
+    send(app, address, characteristic, service, data, write_type).await
 }
 
 #[command]
 pub(crate) async fn recv_string<R: Runtime>(
     app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
 ) -> Result<String> {
-    let data = recv(app, characteristic, service).await?;
+    let data = recv(app, address, characteristic, service).await?;
     Ok(String::from_utf8(data).expect("failed to convert data to string"))
 }
 
 async fn subscribe_channel(
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
 ) -> Result<mpsc::Receiver<Vec<u8>>> {
     let handler = crate::handler().await?;
     let (tx, rx) = tokio::sync::mpsc::channel(512);
-    handler
-        .subscribe(characteristic, service, move |data: Vec<u8>| {
-            info!("subscribe_channel: {:?}", data);
-            tx.try_send(data)
-                .expect("failed to send data to the channel");
-        })
-        .await?;
+    let callback = move |data: Vec<u8>| {
+        info!("subscribe_channel: {:?}", data);
+        tx.try_send(data)
+            .expect("failed to send data to the channel");
+    };
+    match address {
+        Some(address) => {
+            handler
+                .subscribe_to(&address, characteristic, service, callback)
+                .await?;
+        }
+        None => handler.subscribe(characteristic, service, callback).await?,
+    }
     Ok(rx)
 }
 #[command]
 pub(crate) async fn subscribe<R: Runtime>(
     _app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
     on_data: Channel<Vec<u8>>,
 ) -> Result<()> {
-    let mut rx = subscribe_channel(characteristic, service).await?;
+    let mut rx = subscribe_channel(address, characteristic, service).await?;
     async_runtime::spawn(async move {
         while let Some(data) = rx.recv().await {
             on_data
@@ -202,11 +273,12 @@ pub(crate) async fn subscribe<R: Runtime>(
 #[command]
 pub(crate) async fn subscribe_string<R: Runtime>(
     _app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
     service: Option<Uuid>,
     on_data: Channel<String>,
 ) -> Result<()> {
-    let mut rx = subscribe_channel(characteristic, service).await?;
+    let mut rx = subscribe_channel(address, characteristic, service).await?;
     async_runtime::spawn(async move {
         while let Some(data) = rx.recv().await {
             info!("subscribe_string: {:?}", data);
@@ -222,10 +294,19 @@ pub(crate) async fn subscribe_string<R: Runtime>(
 #[command]
 pub(crate) async fn unsubscribe<R: Runtime>(
     _app: AppHandle<R>,
+    address: Option<String>,
     characteristic: Uuid,
+    service: Option<Uuid>,
 ) -> Result<()> {
     let handler = crate::handler().await?;
-    handler.unsubscribe(characteristic).await?;
+    // the address-less fallback still has to honour the service
+    let address = match address {
+        Some(address) => address,
+        None => handler.connected_device().await?.address,
+    };
+    handler
+        .unsubscribe_from(&address, characteristic, service)
+        .await?;
     Ok(())
 }
 
@@ -261,9 +342,12 @@ pub(crate) async fn get_adapter_state<R: Runtime>(_app: AppHandle<R>) -> Result<
 }
 
 #[command]
-pub(crate) async fn mtu<R: Runtime>(_app: AppHandle<R>) -> Result<u16> {
+pub(crate) async fn mtu<R: Runtime>(_app: AppHandle<R>, address: Option<String>) -> Result<u16> {
     let handler = crate::handler().await?;
-    let mtu = handler.mtu().await?;
+    let mtu = match address {
+        Some(address) => handler.device_mtu(&address).await?,
+        None => handler.mtu().await?,
+    };
     Ok(mtu)
 }
 
@@ -307,7 +391,10 @@ pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
         stop_scan,
         connect,
         disconnect,
+        disconnect_all,
+        connected_devices,
         connection_state,
+        connection_events,
         send,
         send_string,
         recv,

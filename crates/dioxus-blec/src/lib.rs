@@ -1,10 +1,13 @@
 //! [`blec`](https://crates.io/crates/blec), the cross platform BLE client, for Dioxus.
 //!
 //! - [`use_ble`] initializes `blec` once for the app and mirrors its state
-//!   (ready, scanning, found devices, connected device) into signals, with
+//!   (ready, scanning, found devices, connected devices) into signals, with
 //!   async methods for the usual operations.
-//! - [`use_ble_notifications`] follows a characteristic for as long as the
-//!   component lives, across reconnects.
+//! - [`use_device_notifications`] follows a characteristic of one device for
+//!   as long as the component lives, across reconnects.
+//!   [`use_ble_notifications`] does the same for the only connected device.
+//! - Several devices can be connected at once: [`Ble::connect`] returns a
+//!   [`Connection`] to read, write and subscribe on that device.
 //! - On android the crate carries the bluetooth permissions and the Kotlin
 //!   side of `blec` as a gradle module `dx` builds into the app, so
 //!   `Dioxus.toml` only needs `[android] min_sdk = 26`.
@@ -40,13 +43,14 @@
 
 pub use blec;
 pub use blec::models;
-pub use blec::{Error, Handler, Result};
+pub use blec::{Connection, ConnectionUpdate, Error, Handler, Result};
 
 use blec::models::{BleDevice, ScanFilter, WriteType};
 use blec::OnDisconnectHandler;
 use dioxus::core::spawn_forever;
 use dioxus::prelude::*;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -97,7 +101,8 @@ pub struct Ble {
     init: Signal<InitState, SyncStorage>,
     scanning: Signal<bool, SyncStorage>,
     devices: Signal<Vec<BleDevice>, SyncStorage>,
-    connected: Signal<Option<BleDevice>, SyncStorage>,
+    /// Sorted by address
+    connected: Signal<Vec<BleDevice>, SyncStorage>,
 }
 
 /// Initializes `blec` once for the whole app and returns its state.
@@ -111,7 +116,7 @@ pub fn use_ble() -> Ble {
             init: Signal::new_maybe_sync_in_scope(InitState::Pending, ScopeId::ROOT),
             scanning: Signal::new_maybe_sync_in_scope(false, ScopeId::ROOT),
             devices: Signal::new_maybe_sync_in_scope(Vec::new(), ScopeId::ROOT),
-            connected: Signal::new_maybe_sync_in_scope(None, ScopeId::ROOT),
+            connected: Signal::new_maybe_sync_in_scope(Vec::new(), ScopeId::ROOT),
         };
         spawn_forever(ble.start());
         ble
@@ -139,18 +144,17 @@ impl Ble {
         });
 
         let (conn_tx, mut conn_rx) = mpsc::channel(8);
-        handler.set_connection_update_channel(conn_tx).await;
-        let mut connected = self.connected;
+        handler.set_connection_event_channel(conn_tx).await;
         spawn_forever(async move {
-            while let Some(is_connected) = conn_rx.recv().await {
-                if is_connected {
+            while let Some(update) = conn_rx.recv().await {
+                if update.connected {
                     // `connect` fills this in itself once the link is up;
                     // only replace it if the device is known already.
-                    if let Ok(device) = handler.connected_device().await {
-                        connected.set(Some(device));
+                    if let Ok(device) = handler.connected_device_at(&update.address).await {
+                        self.upsert_connected(device);
                     }
                 } else {
-                    connected.set(None);
+                    self.remove_connected(&update.address);
                 }
             }
         });
@@ -178,14 +182,53 @@ impl Ble {
         self.devices.cloned()
     }
 
-    /// The connected device, if any. Cleared on disconnect, whoever caused it.
-    pub fn connected(&self) -> Option<BleDevice> {
+    /// The connected devices, sorted by address. A device is removed on
+    /// disconnect, whoever caused it.
+    pub fn connected_devices(&self) -> Vec<BleDevice> {
         self.connected.cloned()
     }
 
-    /// True while a device is connected.
+    /// The connected device if exactly one is connected, `None` without a
+    /// device or with several of them.
+    pub fn connected(&self) -> Option<BleDevice> {
+        match &self.connected.read()[..] {
+            [device] => Some(device.clone()),
+            _ => None,
+        }
+    }
+
+    /// True while at least one device is connected.
     pub fn is_connected(&self) -> bool {
-        self.connected.read().is_some()
+        !self.connected.read().is_empty()
+    }
+
+    /// True while the device with this address is connected.
+    pub fn is_device_connected(&self, address: &str) -> bool {
+        self.connected
+            .read()
+            .iter()
+            .any(|device| device.address == address)
+    }
+
+    fn upsert_connected(mut self, device: BleDevice) {
+        let mut connected = self.connected.write();
+        match connected.binary_search(&device) {
+            Ok(i) => connected[i] = device,
+            Err(i) => connected.insert(i, device),
+        }
+    }
+
+    fn remove_connected(mut self, address: &str) {
+        self.connected
+            .write()
+            .retain(|device| device.address != address);
+    }
+
+    /// Drops the devices the handler has no connection to anymore.
+    fn sync_connected(mut self, handler: &Handler) {
+        self.connected
+            .write()
+            .retain(|device| handler.is_device_connected(&device.address));
     }
 
     /// The underlying `blec` handler, for everything this type has no method for.
@@ -239,40 +282,82 @@ impl Ble {
     }
 
     /// Connects to the device with this address and records it in
-    /// [`connected`](Self::connected). A device that was connected before is
-    /// disconnected first.
+    /// [`connected_devices`](Self::connected_devices). Devices that are
+    /// already connected stay connected.
+    ///
+    /// The returned [`Connection`] reads, writes and subscribes on this device.
     ///
     /// # Errors
     /// Returns an error if the handler is not initialized, the device is
     /// unknown or the connection fails.
-    pub async fn connect(mut self, address: &str) -> Result<()> {
+    pub async fn connect(self, address: &str) -> Result<Connection> {
         let handler = blec::get_handler()?;
-        let mut connected = self.connected;
-        let on_disconnect = OnDisconnectHandler::from_sync(move || connected.set(None));
-        handler
+        let ble = self;
+        let disconnected = address.to_string();
+        let on_disconnect = OnDisconnectHandler::from_sync(move || {
+            ble.remove_connected(&disconnected);
+        });
+        let connection = handler
             .connect(address, on_disconnect, allow_ibeacons())
             .await?;
-        self.connected.set(handler.connected_device().await.ok());
-        Ok(())
+        if let Ok(device) = connection.device().await {
+            self.upsert_connected(device);
+        }
+        Ok(connection)
+    }
+
+    /// A [`Connection`] to a device that is connected already.
+    ///
+    /// # Errors
+    /// Returns an error if the handler is not initialized or the device is not
+    /// connected.
+    pub fn connection(&self, address: &str) -> Result<Connection> {
+        blec::get_handler()?.connection(address)
     }
 
     /// Disconnects from the connected device.
     ///
     /// # Errors
-    /// Returns an error if the handler is not initialized or the disconnect fails.
-    pub async fn disconnect(mut self) -> Result<()> {
-        let result = blec::get_handler()?.disconnect().await;
-        self.connected.set(None);
+    /// Returns an error if the handler is not initialized, no device or more
+    /// than one device is connected, or the disconnect fails.
+    pub async fn disconnect(self) -> Result<()> {
+        let handler = blec::get_handler()?;
+        let result = handler.disconnect().await;
+        self.sync_connected(handler);
+        result
+    }
+
+    /// Disconnects from the device with this address.
+    ///
+    /// # Errors
+    /// Returns an error if the handler is not initialized, the device is not
+    /// connected or the disconnect fails.
+    pub async fn disconnect_device(self, address: &str) -> Result<()> {
+        let handler = blec::get_handler()?;
+        let result = handler.disconnect_device(address).await;
+        self.sync_connected(handler);
+        result
+    }
+
+    /// Disconnects from every connected device.
+    ///
+    /// # Errors
+    /// Returns an error if the handler is not initialized or a disconnect fails.
+    pub async fn disconnect_all(self) -> Result<()> {
+        let handler = blec::get_handler()?;
+        let result = handler.disconnect_all().await;
+        self.sync_connected(handler);
         result
     }
 
     /// Writes `data` to a characteristic of the connected device.
     ///
     /// `service` disambiguates characteristics with the same uuid in several services.
+    /// With several devices connected, write through their [`Connection`]s instead.
     ///
     /// # Errors
-    /// Returns an error if the handler is not initialized, nothing is connected
-    /// or the write fails.
+    /// Returns an error if the handler is not initialized, nothing or more
+    /// than one device is connected or the write fails.
     pub async fn write(
         self,
         characteristic: Uuid,
@@ -287,9 +372,11 @@ impl Ble {
 
     /// Reads a characteristic of the connected device.
     ///
+    /// With several devices connected, read through their [`Connection`]s instead.
+    ///
     /// # Errors
-    /// Returns an error if the handler is not initialized, nothing is connected
-    /// or the read fails.
+    /// Returns an error if the handler is not initialized, nothing or more
+    /// than one device is connected or the read fails.
     pub async fn read(self, characteristic: Uuid, service: Option<Uuid>) -> Result<Vec<u8>> {
         blec::get_handler()?
             .recv_data(characteristic, service)
@@ -301,58 +388,107 @@ fn allow_ibeacons() -> bool {
     blec::ALLOW_IBEACONS.load(Ordering::Relaxed)
 }
 
-/// The latest notification of a characteristic, `None` until the first one.
+/// The latest notification of a characteristic of the connected device,
+/// `None` until the first one.
 ///
-/// Subscribes when a device is connected, again after every reconnect (a
-/// subscription belongs to one GATT link), and unsubscribes when the component
-/// is dropped. Notifications arrive on `blec`'s tasks, so the signal uses the
-/// thread safe storage.
+/// Like [`use_device_notifications`], for the device that is connected while
+/// it is the only one. With several devices connected it does not subscribe.
 pub fn use_ble_notifications(
     characteristic: Uuid,
     service: Option<Uuid>,
 ) -> ReadSignal<Option<Vec<u8>>, SyncStorage> {
     let ble = use_ble();
-    let value = use_signal_sync(|| None::<Vec<u8>>);
-
     // Only the address matters here: a new `BleDevice` value for the same
     // link (rssi and the like) must not resubscribe.
-    let connected_address = use_memo(move || {
+    let address = use_memo(move || match &ble.connected.read()[..] {
+        [device] => Some(device.address.clone()),
+        _ => None,
+    });
+    use_notifications(address, characteristic, service)
+}
+
+/// The latest notification of a characteristic of the device with this
+/// address, `None` until the first one.
+///
+/// Subscribes while the device is connected, again after every reconnect (a
+/// subscription belongs to one GATT link), and unsubscribes when the component
+/// is dropped or `address` changes. Notifications arrive on `blec`'s tasks, so
+/// the signal uses the thread safe storage.
+pub fn use_device_notifications(
+    address: &str,
+    characteristic: Uuid,
+    service: Option<Uuid>,
+) -> ReadSignal<Option<Vec<u8>>, SyncStorage> {
+    let ble = use_ble();
+    let address = address.to_string();
+    // the address while the device is connected
+    let linked = use_memo(use_reactive((&address,), move |(address,)| {
         ble.connected
             .read()
-            .as_ref()
-            .map(|device| device.address.clone())
-    });
+            .iter()
+            .any(|device| device.address == address)
+            .then_some(address)
+    }));
+    use_notifications(linked, characteristic, service)
+}
 
+/// Subscribes to the characteristic on the device `address` names, whenever
+/// that changes.
+fn use_notifications(
+    address: Memo<Option<String>>,
+    characteristic: Uuid,
+    service: Option<Uuid>,
+) -> ReadSignal<Option<Vec<u8>>, SyncStorage> {
+    let value = use_signal_sync(|| None::<Vec<u8>>);
+    // The device the subscription is on, for unsubscribing. A plain value
+    // rather than a signal: it is read while the component is torn down.
+    let subscribed = use_hook(|| Arc::new(Mutex::new(None::<String>)));
+
+    let current = subscribed.clone();
     use_resource(move || {
-        let address = connected_address();
+        let address = address();
+        let current = current.clone();
         async move {
-            if address.is_none() {
-                return;
-            }
             let Ok(handler) = blec::get_handler() else {
                 return;
             };
+            let previous = current.lock().unwrap().take();
+            if let Some(previous) = previous.filter(|p| Some(p) != address.as_ref()) {
+                if handler.is_device_connected(&previous) {
+                    let _ = handler
+                        .unsubscribe_from(&previous, characteristic, service)
+                        .await;
+                }
+            }
+            let Some(address) = address else {
+                return;
+            };
             let subscribed = handler
-                .subscribe(characteristic, service, move |data: Vec<u8>| {
+                .subscribe_to(&address, characteristic, service, move |data: Vec<u8>| {
                     // Called more than once, so take a fresh copy of the
                     // signal each time instead of mutating a captured one.
                     let mut value = value;
                     value.set(Some(data));
                 })
                 .await;
-            if let Err(e) = subscribed {
-                tracing::warn!("could not subscribe to {characteristic}: {e}");
+            match subscribed {
+                Ok(()) => *current.lock().unwrap() = Some(address),
+                Err(e) => tracing::warn!("could not subscribe to {characteristic}: {e}"),
             }
         }
     });
 
     use_drop(move || {
-        if !ble.is_connected() {
+        let Some(address) = subscribed.lock().unwrap().take() else {
             return;
-        }
+        };
         spawn_forever(async move {
             if let Ok(handler) = blec::get_handler() {
-                let _ = handler.unsubscribe(characteristic).await;
+                if handler.is_device_connected(&address) {
+                    let _ = handler
+                        .unsubscribe_from(&address, characteristic, service)
+                        .await;
+                }
             }
         });
     });

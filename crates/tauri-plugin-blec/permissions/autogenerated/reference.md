@@ -8,7 +8,10 @@ Default permissions for the plugin
 - `allow-stop-scan`
 - `allow-connect`
 - `allow-disconnect`
+- `allow-disconnect-all`
+- `allow-connected-devices`
 - `allow-connection-state`
+- `allow-connection-events`
 - `allow-send`
 - `allow-recv`
 - `allow-send-string`
@@ -89,6 +92,58 @@ Denies the connect command without any pre-configured scope.
 <tr>
 <td>
 
+`blec:allow-connected-devices`
+
+</td>
+<td>
+
+Enables the connected_devices command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-connected-devices`
+
+</td>
+<td>
+
+Denies the connected_devices command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-connection-events`
+
+</td>
+<td>
+
+Enables the connection_events command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-connection-events`
+
+</td>
+<td>
+
+Denies the connection_events command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `blec:allow-connection-state`
 
 </td>
@@ -134,6 +189,32 @@ Enables the disconnect command without any pre-configured scope.
 <td>
 
 Denies the disconnect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-disconnect-all`
+
+</td>
+<td>
+
+Enables the disconnect_all command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-disconnect-all`
+
+</td>
+<td>
+
+Denies the disconnect_all command without any pre-configured scope.
 
 </td>
 </tr>

@@ -14,10 +14,11 @@ use once_cell::sync::Lazy;
 use tokio::sync::mpsc;
 use uuid::{uuid, Uuid};
 
+use crate::connection::Connection;
 use crate::error::Error;
 use crate::handler::{Handler, OnDisconnectHandler};
 use crate::mock::{DeviceHandle, DeviceSpec, MockWorld, ServiceSpec};
-use crate::models::{BleDevice, ScanFilter, Timeouts};
+use crate::models::{BleDevice, ConnectionUpdate, ScanFilter, Timeouts};
 
 pub const SERVICE: Uuid = uuid!("A07498CA-AD5B-474E-940D-16F1FBE7E8CD");
 pub const SERVICE2: Uuid = uuid!("A07498CA-AD5B-474E-940D-16F1FBE7E8CE");
@@ -32,6 +33,9 @@ pub const MANUFACTURER_DATA: [u8; 4] = [0x21, 0x22, 0x23, 0x24];
 
 pub const DEVICE_ADDR: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01];
 pub const OTHER_ADDR: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x02];
+pub const SECOND_ADDR: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x03];
+/// MTU of [`second_device`], different from the default one of [`stress_device`].
+pub const SECOND_MTU: u16 = 185;
 
 /// Timeouts short enough that even the retrying `connect` finishes quickly.
 pub fn short_timeouts() -> Timeouts {
@@ -92,6 +96,24 @@ pub fn other_device(world: &MockWorld) -> DeviceHandle {
     world.add_device(DeviceSpec::new(OTHER_ADDR).name("other"))
 }
 
+/// A second device to connect to alongside [`stress_device`]: one service
+/// with `CHARAC` and `CHARAC_NOTIFY`, and a different MTU.
+pub fn second_device(world: &MockWorld) -> DeviceHandle {
+    world.add_device(
+        DeviceSpec::new(SECOND_ADDR)
+            .name("second")
+            .mtu(SECOND_MTU)
+            .service(
+                ServiceSpec::new(SERVICE)
+                    .characteristic(
+                        CHARAC,
+                        CharPropFlags::READ | CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                    )
+                    .characteristic(CHARAC_NOTIFY, CharPropFlags::NOTIFY),
+            ),
+    )
+}
+
 /// A disconnect callback that counts how often it ran.
 pub fn disconnect_counter() -> (OnDisconnectHandler, Arc<AtomicUsize>) {
     let counter = Arc::new(AtomicUsize::new(0));
@@ -111,6 +133,21 @@ pub async fn connection_updates(handler: &Handler) -> mpsc::Receiver<bool> {
     rx
 }
 
+/// Registers a connection event channel and returns its receiver.
+pub async fn connection_events(handler: &Handler) -> mpsc::Receiver<ConnectionUpdate> {
+    let (tx, rx) = mpsc::channel(64);
+    handler.set_connection_event_channel(tx).await;
+    rx
+}
+
+/// A [`ConnectionUpdate`] for `device`.
+pub fn update(device: &DeviceHandle, connected: bool) -> ConnectionUpdate {
+    ConnectionUpdate {
+        address: device.address_string(),
+        connected,
+    }
+}
+
 /// Registers a scanning update channel and returns its receiver.
 pub async fn scanning_updates(handler: &Handler) -> mpsc::Receiver<bool> {
     let (tx, rx) = mpsc::channel(64);
@@ -119,7 +156,7 @@ pub async fn scanning_updates(handler: &Handler) -> mpsc::Receiver<bool> {
 }
 
 /// Everything currently queued in an update channel.
-pub fn drain(rx: &mut mpsc::Receiver<bool>) -> Vec<bool> {
+pub fn drain<T>(rx: &mut mpsc::Receiver<T>) -> Vec<T> {
     let mut out = vec![];
     while let Ok(v) = rx.try_recv() {
         out.push(v);
@@ -173,7 +210,7 @@ pub async fn scan(handler: &'static Handler, filter: ScanFilter) -> Result<Vec<B
 pub async fn connect(
     handler: &'static Handler,
     device: &DeviceHandle,
-) -> (Result<(), Error>, Arc<AtomicUsize>) {
+) -> (Result<Connection, Error>, Arc<AtomicUsize>) {
     scan(handler, ScanFilter::None).await.expect("scan failed");
     let (on_disconnect, counter) = disconnect_counter();
     let result = handler
@@ -197,6 +234,38 @@ pub async fn connect_ok(handler: &'static Handler, device: &DeviceHandle) -> Arc
     counter
 }
 
+/// Connects and asserts success, returning the connection as well.
+pub async fn connect_conn_ok(
+    handler: &'static Handler,
+    device: &DeviceHandle,
+) -> (Connection, Arc<AtomicUsize>) {
+    let (result, counter) = connect(handler, device).await;
+    let connection = result.expect("connect failed");
+    assert!(connection.is_connected(), "connection not up after connect");
+    assert!(device.is_connected(), "device not connected after connect");
+    (connection, counter)
+}
+
+/// Asserts that the handler holds no state for the link to `device`.
+pub async fn assert_device_disconnected(handler: &Handler, device: &DeviceHandle) {
+    let address = device.address_string();
+    assert!(
+        !handler.is_device_connected(&address),
+        "is_device_connected({address}) still true"
+    );
+    assert!(
+        matches!(handler.device_mtu(&address).await, Err(Error::DeviceNotConnected(a)) if a == address),
+        "device_mtu({address}) still works"
+    );
+    assert!(
+        matches!(
+            handler.recv_data_from(&address, CHARAC, None).await,
+            Err(Error::DeviceNotConnected(_))
+        ),
+        "recv_data_from({address}) does not report DeviceNotConnected"
+    );
+}
+
 /// Asserts that the handler holds no connection state at all.
 pub async fn assert_disconnected(handler: &Handler) {
     assert!(!handler.is_connected(), "is_connected() still true");
@@ -217,5 +286,9 @@ pub async fn assert_disconnected(handler: &Handler) {
             Err(Error::NoDeviceConnected)
         ),
         "recv_data() does not report NoDeviceConnected"
+    );
+    assert!(
+        handler.connected_devices().await.is_empty(),
+        "connected_devices() not empty"
     );
 }

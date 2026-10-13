@@ -33,6 +33,37 @@ async fn example() -> Result<(), blec::Error> {
 
 `blec::init()` creates the handler once; `blec::get_handler()` returns it from anywhere afterwards.
 
+### Several devices at once
+
+Connecting to a device leaves the other connected devices alone. `connect` returns a
+`Connection`, a cheap handle for that device; `handler.connection(address)` gives one for a device
+that is connected already.
+
+```rust
+use blec::models::WriteType;
+use blec::OnDisconnectHandler;
+use uuid::uuid;
+
+async fn example() -> Result<(), blec::Error> {
+    let handler = blec::get_handler()?;
+    let sensor = handler.connect("00:00:00:00:00:01", OnDisconnectHandler::None, false).await?;
+    let lamp = handler.connect("00:00:00:00:00:02", OnDisconnectHandler::None, false).await?;
+    let value = sensor.recv_data(uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"), None).await?;
+    lamp.send_data(uuid!("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021C"), None, &value, WriteType::WithResponse)
+        .await?;
+    handler.disconnect_all().await
+}
+```
+
+The handler has the same operations with an address parameter (`send_data_to`,
+`recv_data_from`, `subscribe_to`, `unsubscribe_from`, `device_mtu`, `disconnect_device`), plus
+`connected_devices()` and `set_connection_event_channel`, which reports a `ConnectionUpdate
+{ address, connected }` for every device that connects or disconnects.
+
+The methods without an address (`send_data`, `recv_data`, `subscribe`, `mtu`, `disconnect`, ...)
+work on the only connected device and fail with `Error::MultipleDevicesConnected` while several
+are connected.
+
 ## Mock backend
 
 The `mock` cargo feature (desktop only) replaces the platform backend with an in-process

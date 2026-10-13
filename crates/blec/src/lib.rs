@@ -21,16 +21,18 @@ use once_cell::sync::OnceCell;
 
 #[cfg(target_os = "android")]
 pub mod android;
+mod connection;
 mod error;
 mod handler;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 pub mod models;
 
+pub use connection::Connection;
 pub use error::{Error, Result};
 pub use handler::Handler;
 pub use handler::{OnDisconnectHandler, SubscriptionHandler};
-pub use models::{Timeouts, TimeoutsMs};
+pub use models::{ConnectionUpdate, Timeouts, TimeoutsMs};
 
 /// Whether scans and permission requests include iBeacon devices, which on
 /// Android additionally requires the location permission.

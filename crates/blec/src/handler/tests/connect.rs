@@ -279,37 +279,38 @@ async fn service_discovery_timeout_tears_down_link() {
     assert_disconnected(handler).await;
 }
 
+/// Several devices can be connected at once: connecting to a second device
+/// leaves the first one alone.
 #[tokio::test(start_paused = true)]
-async fn connect_to_second_device_disconnects_first() {
+async fn connect_to_second_device_keeps_first() {
     let (world, handler) = test_world();
     let first = stress_device(&world);
-    let second = world.add_device(
-        crate::mock::DeviceSpec::new(OTHER_ADDR)
-            .name("second")
-            .service(crate::mock::ServiceSpec::new(SERVICE).characteristic(
-                CHARAC,
-                btleplug::api::CharPropFlags::READ | btleplug::api::CharPropFlags::WRITE,
-            )),
-    );
+    let second = second_device(&world);
     let mut updates = connection_updates(handler).await;
+    let mut events = connection_events(handler).await;
 
     let first_counter = connect_ok(handler, &first).await;
-    assert_eq!(drain(&mut updates), vec![true]);
     let second_counter = connect_ok(handler, &second).await;
 
-    assert!(!first.is_connected(), "first device still connected");
+    assert!(first.is_connected(), "first device was disconnected");
     assert!(second.is_connected());
-    assert!(first.ops().contains(&Op::Disconnect));
-    assert_eq!(
-        first_counter.load(Ordering::SeqCst),
-        1,
-        "callback of the first device"
-    );
+    assert!(!first.ops().contains(&Op::Disconnect), "{:?}", first.ops());
+    assert_eq!(first_counter.load(Ordering::SeqCst), 0);
     assert_eq!(second_counter.load(Ordering::SeqCst), 0);
-    assert_eq!(drain(&mut updates), vec![false, true]);
+    assert_eq!(drain(&mut updates), vec![true, true]);
     assert_eq!(
-        handler.connected_device().await.unwrap().address,
-        second.address_string()
+        drain(&mut events),
+        vec![update(&first, true), update(&second, true)]
+    );
+    let connected: Vec<String> = handler
+        .connected_devices()
+        .await
+        .into_iter()
+        .map(|d| d.address)
+        .collect();
+    assert_eq!(
+        connected,
+        vec![first.address_string(), second.address_string()]
     );
 }
 
