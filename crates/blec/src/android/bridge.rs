@@ -73,6 +73,25 @@ struct Bridge {
     next_id: AtomicU64,
 }
 
+// This is the binding for `com.plugin.blec.Bridge`, introduced for caching
+// method IDs without manual `unsafe` calls. Currently only the most frequently
+// used `invoke` method is declared here for optimization. The bridge should
+// have been initialized when this binding is firstly used.
+jni::bind_java_type! {
+    BridgeClass => "com.plugin.blec.Bridge",
+    methods {
+        static fn invoke(id: jlong, cmd: JString, args: JString) -> void,
+    },
+    hooks = {
+        load_class = |env, _, _| {
+            let bridge = bridge().map_err(|_| jni::errors::Error::ClassNotFound {
+                name: "com.plugin.blec.Bridge".to_string(),
+            })?;
+            env.new_local_ref(&bridge.class)
+        },
+    },
+}
+
 static BRIDGE: OnceCell<Bridge> = OnceCell::new();
 
 fn bridge() -> Result<&'static Bridge, Error> {
@@ -438,20 +457,14 @@ pub(crate) async fn call<P: Serialize, R: DeserializeOwned>(
 
 fn invoke(bridge: &Bridge, id: u64, cmd: &str, args: &str) -> Result<(), Error> {
     bridge.vm.attach_current_thread(|env| {
+        // ids are allocated by us and never come close to i64::MAX
+        #[allow(clippy::cast_possible_wrap)]
+        let id = id as jlong;
+
         let cmd = JString::from_str(env, cmd)?;
         let args = JString::from_str(env, args)?;
-        env.call_static_method(
-            &bridge.class,
-            jni_str!("invoke"),
-            jni_sig!((id: jlong, cmd: java.lang.String, args: java.lang.String) -> void),
-            &[
-                // ids are allocated by us and never come close to i64::MAX
-                #[allow(clippy::cast_possible_wrap)]
-                (id as jlong).into(),
-                (&cmd).into(),
-                (&args).into(),
-            ],
-        )?;
+
+        BridgeClass::invoke(env, id, &cmd, &args)?;
         Ok(())
     })
 }
