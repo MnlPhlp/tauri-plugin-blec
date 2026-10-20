@@ -200,15 +200,29 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
                 sendResult(result)
             }
         }
-        scanner?.startScan(filters, settings, scanCb!!)
+        try {
+            scanner?.startScan(filters, settings, scanCb!!)
+        } catch (e: IllegalStateException) {
+            // Bluetooth is off. Clear the callback, or every later scan is
+            // rejected as already running.
+            scanCb = null
+            invoke.reject("start_scan: ${e.message}")
+            return
+        }
         invoke.resolve()
     }
 
     @SuppressLint("MissingPermission")
     fun stopScan(invoke: Invoke){
-        if (scanCb!=null) {
-            scanner?.stopScan(scanCb!!)
+        val callback = scanCb
+        if (callback != null) {
+            // Clear first: stopping throws when Bluetooth is off.
             scanCb = null
+            try {
+                scanner?.stopScan(callback)
+            } catch (e: IllegalStateException) {
+                // Bluetooth is off, so the scan has already stopped.
+            }
         }
         invoke.resolve()
     }
