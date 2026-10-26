@@ -129,6 +129,14 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
                 ?: throw RuntimeException("No bluetooth scanner available for adapter")
         }
 
+        // Check on every scan, not only when the scanner is created: starting
+        // a scan with Bluetooth off throws. The catch below still covers it
+        // being turned off between this check and the start.
+        if (manager?.adapter?.isEnabled != true) {
+            invoke.reject("start_scan: Bluetooth is off")
+            return
+        }
+
         // clear old devices
         this.plugin.devices.clear()
 
