@@ -129,6 +129,14 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
                 ?: throw RuntimeException("No bluetooth scanner available for adapter")
         }
 
+        // Check on every scan, not only when the scanner is created: starting
+        // a scan with Bluetooth off throws. The catch below still covers it
+        // being turned off between this check and the start.
+        if (manager?.adapter?.isEnabled != true) {
+            invoke.reject("start_scan: Bluetooth is off")
+            return
+        }
+
         // clear old devices
         this.plugin.devices.clear()
 
@@ -200,15 +208,29 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
                 sendResult(result)
             }
         }
-        scanner?.startScan(filters, settings, scanCb!!)
+        try {
+            scanner?.startScan(filters, settings, scanCb!!)
+        } catch (e: IllegalStateException) {
+            // Bluetooth is off. Clear the callback, or every later scan is
+            // rejected as already running.
+            scanCb = null
+            invoke.reject("start_scan: ${e.message}")
+            return
+        }
         invoke.resolve()
     }
 
     @SuppressLint("MissingPermission")
     fun stopScan(invoke: Invoke){
-        if (scanCb!=null) {
-            scanner?.stopScan(scanCb!!)
+        val callback = scanCb
+        if (callback != null) {
+            // Clear first: stopping throws when Bluetooth is off.
             scanCb = null
+            try {
+                scanner?.stopScan(callback)
+            } catch (e: IllegalStateException) {
+                // Bluetooth is off, so the scan has already stopped.
+            }
         }
         invoke.resolve()
     }
