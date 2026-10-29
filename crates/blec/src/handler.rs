@@ -980,8 +980,9 @@ impl Handler {
         trace!("handle_disconnect: DeviceDisconnected event for {peripheral_id}");
         info!("Handling disconnect for {peripheral_id}");
         let Some(address) = self.link_address(&peripheral_id) else {
-            // event not for a device we are connected to, ignore
-            warn!("Unexpected disconnect event for device {peripheral_id}, no link to it");
+            // btleplug's CoreBluetooth backend reports a user-initiated disconnect twice: from
+            // Peripheral::disconnect and from didDisconnectPeripheral. The first clears the link.
+            debug!("Ignoring disconnect event for {peripheral_id}, no link to it");
             return Ok(());
         };
         info!("disconnecting {address}");
