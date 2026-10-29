@@ -21,6 +21,7 @@ use futures::{Stream, StreamExt};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 use std::{
@@ -358,8 +359,10 @@ pub struct Peripheral {
     address: BDAddr,
     name: String,
     rssi: i16,
-    #[serde(default = "default_mtu")]
-    mtu_val: AtomicU16,
+    // Shared by every clone: `connect` stores the negotiated MTU on the
+    // instance it runs on, while callers may hold a clone taken earlier.
+    #[serde(skip_deserializing, default = "default_mtu")]
+    mtu_val: Arc<AtomicU16>,
     #[serde(default, deserialize_with = "deserialize_base64_map")]
     manufacturer_data: HashMap<u16, Vec<u8>>,
     #[serde(default, deserialize_with = "deserialize_base64_map")]
@@ -368,8 +371,8 @@ pub struct Peripheral {
     services: Vec<Uuid>,
     tx_power_level: Option<i16>,
 }
-fn default_mtu() -> AtomicU16 {
-    AtomicU16::new(23)
+fn default_mtu() -> Arc<AtomicU16> {
+    Arc::new(AtomicU16::new(23))
 }
 impl Clone for Peripheral {
     fn clone(&self) -> Self {
@@ -378,7 +381,7 @@ impl Clone for Peripheral {
             address: self.address,
             name: self.name.clone(),
             rssi: self.rssi,
-            mtu_val: AtomicU16::new(self.mtu_val.load(Ordering::Relaxed)),
+            mtu_val: self.mtu_val.clone(),
             manufacturer_data: self.manufacturer_data.clone(),
             service_data: self.service_data.clone(),
             services: self.services.clone(),
