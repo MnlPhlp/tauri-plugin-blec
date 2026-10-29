@@ -7,5 +7,6 @@ mod disconnect;
 mod helpers;
 mod multi;
 mod notify;
+mod runtime;
 mod scan;
 mod stress;

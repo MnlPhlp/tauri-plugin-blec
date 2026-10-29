@@ -33,6 +33,11 @@ async fn example() -> Result<(), blec::Error> {
 
 `blec::init()` creates the handler once; `blec::get_handler()` returns it from anywhere afterwards.
 
+The API works from any async executor (tokio, `futures_lite::future::block_on`, smol, ...).
+Internally blec and btleplug need tokio. Called from inside a tokio runtime, blec uses that
+runtime; otherwise it starts a single background thread with its own small tokio runtime the
+first time it is needed.
+
 ### Several devices at once
 
 Connecting to a device leaves the other connected devices alone. `connect` returns a
