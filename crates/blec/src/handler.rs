@@ -1685,8 +1685,10 @@ async fn filter_peripherals(discovered: &mut Vec<Peripheral>, filter: &ScanFilte
 async fn listen_notify(dev: Peripheral, listeners: Arc<Mutex<Vec<Listener>>>) {
     let mut stream = match dev.notifications().await {
         Ok(stream) => stream,
+        // the android side drops a peripheral from its connected devices on disconnect, so a
+        // disconnect landing before the first poll makes this fail without anything being wrong
         Err(e) => {
-            error!("failed to get notifications stream: {e}");
+            debug!("notification task stopping, no notification stream: {e}");
             return;
         }
     };
