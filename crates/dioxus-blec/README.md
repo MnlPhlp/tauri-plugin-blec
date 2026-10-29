@@ -108,7 +108,7 @@ startup. The directory is a symlink to `crates/blec/android/lib`, the one copy o
 [Android internals](../blec/README.md#android-internals).
 
 Runtime permissions are requested by the first scan, or explicitly with
-`ble.check_permissions(ask_if_denied)`.
+`ble.check_permissions(ask_if_denied)`. `ble.enable_bluetooth()` asks the user to turn Bluetooth on.
 
 Build for an attached phone with `dx serve --platform android --device`; without `--device`, `dx`
 builds for the emulator (`x86_64`) even when none is running.

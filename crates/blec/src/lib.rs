@@ -88,3 +88,16 @@ pub async fn check_permissions(ask_if_denied: bool) -> Result<bool> {
     #[cfg(not(target_os = "android"))]
     return Ok(true);
 }
+
+/// Asks the user to turn Bluetooth on, unless it is on already. Only starts the request: whether
+/// the user agreed shows in [`Handler::get_adapter_state`]. Does nothing off Android, where apps
+/// cannot ask for it.
+///
+/// # Errors
+/// Returns an error if the bluetooth permission is missing or calling the android side fails.
+pub async fn enable_bluetooth() -> Result<()> {
+    #[cfg(target_os = "android")]
+    return rt::compat(android::enable_bluetooth()).await;
+    #[cfg(not(target_os = "android"))]
+    return Ok(());
+}

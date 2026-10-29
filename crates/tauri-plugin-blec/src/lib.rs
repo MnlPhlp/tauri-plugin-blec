@@ -17,7 +17,7 @@ mod commands;
 pub use blec::mock;
 pub use blec::models;
 pub use blec::{
-    check_permissions, get_handler, Connection, ConnectionUpdate, Error, Handler,
+    check_permissions, enable_bluetooth, get_handler, Connection, ConnectionUpdate, Error, Handler,
     OnDisconnectHandler, Result, SubscriptionHandler, Timeouts, TimeoutsMs, ALLOW_IBEACONS,
 };
 

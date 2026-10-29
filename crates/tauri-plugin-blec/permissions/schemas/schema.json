@@ -379,6 +379,18 @@
           "markdownDescription": "Denies the disconnect_all command without any pre-configured scope."
         },
         {
+          "description": "Enables the enable_bluetooth command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-bluetooth",
+          "markdownDescription": "Enables the enable_bluetooth command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable_bluetooth command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-bluetooth",
+          "markdownDescription": "Denies the enable_bluetooth command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_adapter_state command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-adapter-state",
@@ -571,10 +583,10 @@
           "markdownDescription": "Denies the unsubscribe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-disconnect-all`\n- `allow-connected-devices`\n- `allow-connection-state`\n- `allow-connection-events`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-disconnect-all`\n- `allow-connected-devices`\n- `allow-connection-state`\n- `allow-connection-events`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-enable-bluetooth`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-disconnect-all`\n- `allow-connected-devices`\n- `allow-connection-state`\n- `allow-connection-events`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-scan`\n- `allow-stop-scan`\n- `allow-connect`\n- `allow-disconnect`\n- `allow-disconnect-all`\n- `allow-connected-devices`\n- `allow-connection-state`\n- `allow-connection-events`\n- `allow-send`\n- `allow-recv`\n- `allow-send-string`\n- `allow-recv-string`\n- `allow-subscribe`\n- `allow-subscribe-string`\n- `allow-unsubscribe`\n- `allow-scanning-state`\n- `allow-list-services`\n- `allow-check-permissions`\n- `allow-enable-bluetooth`\n- `allow-get-adapter-state`\n- `allow-mtu`\n- `allow-set-write-behavior`\n- `allow-set-timeouts`\n- `allow-set-android-mtu`"
         }
       ]
     }

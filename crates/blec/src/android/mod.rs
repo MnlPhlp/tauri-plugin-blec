@@ -81,6 +81,16 @@ pub(crate) async fn check_permissions(ask_if_denied: bool) -> std::result::Resul
     Ok(res.result)
 }
 
+/// Shows the system dialog asking the user to turn Bluetooth on, unless it is on already.
+pub(crate) async fn enable_bluetooth() -> std::result::Result<(), Error> {
+    bridge::call(
+        "enable_bluetooth",
+        serde_json::Value::Null,
+        IPC_DEFAULT_TIMEOUT,
+    )
+    .await
+}
+
 #[derive(Debug, Clone)]
 pub struct Adapter;
 /// The peripherals by id, with the [`CURRENT_SCAN`] that last reported them (`None` for one

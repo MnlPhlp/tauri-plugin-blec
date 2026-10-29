@@ -322,6 +322,14 @@ pub(crate) async fn check_permissions(
 }
 
 #[command]
+pub(crate) async fn enable_bluetooth(_app: AppHandle<impl Runtime>) -> Result<()> {
+    // Does not use the handler, but on android it does go through the same
+    // bridge, which the initialization sets up.
+    crate::ready().await?;
+    blec::enable_bluetooth().await
+}
+
+#[command]
 pub(crate) async fn list_services<R: Runtime>(
     _app: tauri::AppHandle<R>,
     address: String,
@@ -404,6 +412,7 @@ pub fn commands<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
         unsubscribe,
         scanning_state,
         check_permissions,
+        enable_bluetooth,
         list_services,
         get_adapter_state,
         mtu,
