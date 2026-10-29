@@ -259,7 +259,9 @@ pub async fn assert_device_disconnected(handler: &Handler, device: &DeviceHandle
     );
     assert!(
         matches!(
-            handler.recv_data_from(&address, CHARAC, None).await,
+            handler
+                .recv_data_from(&address, CHARAC, Some(SERVICE))
+                .await,
             Err(Error::DeviceNotConnected(_))
         ),
         "recv_data_from({address}) does not report DeviceNotConnected"
@@ -282,7 +284,7 @@ pub async fn assert_disconnected(handler: &Handler) {
     );
     assert!(
         matches!(
-            handler.recv_data(CHARAC, None).await,
+            handler.recv_data(CHARAC, Some(SERVICE)).await,
             Err(Error::NoDeviceConnected)
         ),
         "recv_data() does not report NoDeviceConnected"

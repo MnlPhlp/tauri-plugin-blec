@@ -192,7 +192,7 @@ async fn randomized_connection_stress() {
             Step::DropLinkSilently => {
                 device.drop_link_silently();
                 // the handler can only find out through an operation
-                let _ = handler.recv_data(CHARAC, None).await;
+                let _ = handler.recv_data(CHARAC, Some(SERVICE)).await;
                 if handler.is_connected() && !device.is_connected() {
                     // the desync is repaired by disconnect()
                     let _ = handler.disconnect().await;

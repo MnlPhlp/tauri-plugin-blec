@@ -42,7 +42,7 @@ async fn operations_are_routed_by_address() {
         .unwrap();
     assert_eq!(first.value(SERVICE, CHARAC), Some(vec![1]));
     assert_eq!(second.value(SERVICE, CHARAC), Some(vec![2]));
-    assert_eq!(b.recv_data(CHARAC, None).await.unwrap(), vec![2]);
+    assert_eq!(b.recv_data(CHARAC, Some(SERVICE)).await.unwrap(), vec![2]);
     assert_eq!(
         handler
             .recv_data_from(&first.address_string(), CHARAC, Some(SERVICE))
@@ -156,11 +156,11 @@ async fn dropping_one_link_keeps_the_other() {
     assert!(second.notify(SERVICE, CHARAC_NOTIFY, vec![7]));
     settle().await;
     assert_eq!(*from_b.lock().unwrap(), vec![vec![7]]);
-    b.send_data(CHARAC, None, &[8], WriteType::WithResponse)
+    b.send_data(CHARAC, Some(SERVICE), &[8], WriteType::WithResponse)
         .await
         .unwrap();
     assert!(matches!(
-        a.recv_data(CHARAC, None).await,
+        a.recv_data(CHARAC, Some(SERVICE)).await,
         Err(Error::DeviceNotConnected(_))
     ));
 }
@@ -175,12 +175,12 @@ async fn address_less_api_needs_a_single_device() {
 
     assert!(matches!(
         handler
-            .send_data(CHARAC, None, &[1], WriteType::WithResponse)
+            .send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
             .await,
         Err(Error::MultipleDevicesConnected)
     ));
     assert!(matches!(
-        handler.recv_data(CHARAC, None).await,
+        handler.recv_data(CHARAC, Some(SERVICE)).await,
         Err(Error::MultipleDevicesConnected)
     ));
     assert!(matches!(
@@ -213,7 +213,7 @@ async fn address_less_api_needs_a_single_device() {
         first.address_string()
     );
     handler
-        .send_data(CHARAC, None, &[5], WriteType::WithResponse)
+        .send_data(CHARAC, Some(SERVICE), &[5], WriteType::WithResponse)
         .await
         .unwrap();
     assert_eq!(first.value(SERVICE, CHARAC), Some(vec![5]));
@@ -282,7 +282,7 @@ async fn failed_connect_leaves_other_device_connected() {
     assert_eq!(counter_a.load(Ordering::SeqCst), 0);
     // like with a single device, listeners hear that the attempt ended
     assert_eq!(drain(&mut events), vec![update(&second, false)]);
-    a.send_data(CHARAC, None, &[1], WriteType::WithResponse)
+    a.send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
         .await
         .unwrap();
     // the failed attempt left nothing behind for the address-less API
@@ -302,7 +302,7 @@ async fn connection_handle_survives_reconnect() {
     assert!(wait_until(Duration::from_secs(1), || !a.is_connected()).await);
     settle().await;
     assert!(matches!(
-        a.recv_data(CHARAC, None).await,
+        a.recv_data(CHARAC, Some(SERVICE)).await,
         Err(Error::DeviceNotConnected(_))
     ));
     assert!(matches!(
@@ -312,7 +312,7 @@ async fn connection_handle_survives_reconnect() {
 
     connect_ok(handler, &device).await;
     assert!(a.is_connected());
-    a.send_data(CHARAC, None, &[9], WriteType::WithResponse)
+    a.send_data(CHARAC, Some(SERVICE), &[9], WriteType::WithResponse)
         .await
         .unwrap();
     assert_eq!(device.value(SERVICE, CHARAC), Some(vec![9]));
@@ -373,7 +373,10 @@ async fn operations_run_in_parallel_across_devices() {
     second.set_read_behaviour(OpBehaviour::Delay(delay));
 
     let start = tokio::time::Instant::now();
-    let (ra, rb) = tokio::join!(a.recv_data(CHARAC, None), b.recv_data(CHARAC, None));
+    let (ra, rb) = tokio::join!(
+        a.recv_data(CHARAC, Some(SERVICE)),
+        b.recv_data(CHARAC, Some(SERVICE))
+    );
     ra.unwrap();
     rb.unwrap();
     assert!(
@@ -383,7 +386,10 @@ async fn operations_run_in_parallel_across_devices() {
     );
 
     let start = tokio::time::Instant::now();
-    let (r1, r2) = tokio::join!(a.recv_data(CHARAC, None), a.recv_data(CHARAC, None));
+    let (r1, r2) = tokio::join!(
+        a.recv_data(CHARAC, Some(SERVICE)),
+        a.recv_data(CHARAC, Some(SERVICE))
+    );
     r1.unwrap();
     r2.unwrap();
     assert!(
