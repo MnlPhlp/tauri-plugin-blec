@@ -20,7 +20,7 @@ use btleplug::{
 use futures::{Stream, StreamExt};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
@@ -83,8 +83,16 @@ pub(crate) async fn check_permissions(ask_if_denied: bool) -> std::result::Resul
 
 #[derive(Debug, Clone)]
 pub struct Adapter;
-static DEVICES: Lazy<RwLock<HashMap<PeripheralId, Peripheral>>> =
+/// The peripherals by id, with the [`CURRENT_SCAN`] that last reported them (`None` for one
+/// only retrieved by address).
+///
+/// A scan start keeps the entries: a connect right after it resolves its device here. Only the
+/// current scan's devices are reported as its results.
+#[allow(clippy::type_complexity)]
+static DEVICES: Lazy<RwLock<HashMap<PeripheralId, (Peripheral, Option<u64>)>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+static CURRENT_SCAN: AtomicU64 = AtomicU64::new(0);
 
 /// The services discovered per peripheral.
 ///
@@ -181,7 +189,7 @@ impl btleplug::api::Central for Adapter {
         )
         .await
         .map_err(ble_err)?;
-        DEVICES.write().await.clear();
+        let scan = CURRENT_SCAN.fetch_add(1, Ordering::Relaxed) + 1;
         let task = tokio::spawn(async move {
             while let Some(value) = rx.next().await {
                 let device = match serde_json::from_value::<PeripheralResult>(value) {
@@ -192,7 +200,10 @@ impl btleplug::api::Central for Adapter {
                     }
                 };
                 tracing::trace!("device: {device:?}");
-                DEVICES.write().await.insert(device.id.clone(), device);
+                DEVICES
+                    .write()
+                    .await
+                    .insert(device.id.clone(), (device, Some(scan)));
             }
         });
         // A scan that is still running keeps its own channel registered; replace
@@ -222,7 +233,14 @@ impl btleplug::api::Central for Adapter {
     }
 
     async fn peripherals(&self) -> Result<Vec<Self::Peripheral>> {
-        Ok(DEVICES.read().await.values().cloned().collect())
+        let current = CURRENT_SCAN.load(Ordering::Relaxed);
+        Ok(DEVICES
+            .read()
+            .await
+            .values()
+            .filter(|(_, scan)| *scan == Some(current))
+            .map(|(device, _)| device.clone())
+            .collect())
     }
 
     /// Resolves known addresses without a scan, so a peripheral that was lost
@@ -258,9 +276,9 @@ impl btleplug::api::Central for Adapter {
             // about advertisements, so an entry a scan already filled in is
             // kept: the point of the call is repairing the java device map.
             let mut devices = DEVICES.write().await;
-            let peripheral = devices
+            let (peripheral, _) = devices
                 .entry(res.result.id.clone())
-                .or_insert(res.result)
+                .or_insert((res.result, None))
                 .clone();
             peripherals.push(peripheral);
         }
@@ -268,11 +286,13 @@ impl btleplug::api::Central for Adapter {
     }
 
     async fn peripheral(&self, id: &PeripheralId) -> Result<Self::Peripheral> {
+        // not age-filtered: this resolves a device to act on, which can happen long after its
+        // last advertisement
         DEVICES
             .read()
             .await
             .get(id)
-            .cloned()
+            .map(|(device, _)| device.clone())
             .ok_or(btleplug::Error::DeviceNotFound)
     }
 

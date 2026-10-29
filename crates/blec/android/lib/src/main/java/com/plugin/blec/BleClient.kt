@@ -137,8 +137,7 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
             return
         }
 
-        // clear old devices
-        this.plugin.devices.clear()
+        // old devices are kept: a connect right after a scan starts resolves its device here
 
         var filters: ArrayList<ScanFilter?>? = null
         if (args.services.isNotEmpty()) {

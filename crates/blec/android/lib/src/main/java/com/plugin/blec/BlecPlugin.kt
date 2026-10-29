@@ -29,7 +29,7 @@ class BlecPlugin(private val context: Context) {
     // operations on one device run while another connects, and scan results
     // are written from the main thread.
 
-    /** The peripherals the last scan reported, by address. */
+    /** The peripherals scans reported, by address; a scan start keeps the old ones. */
     var devices: MutableMap<String, Peripheral> = ConcurrentHashMap()
 
     /** The peripherals with a `BluetoothGatt`, which must not be replaced. */
