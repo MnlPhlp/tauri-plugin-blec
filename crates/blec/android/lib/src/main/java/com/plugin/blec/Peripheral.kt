@@ -207,7 +207,7 @@ class Peripheral(
                     Log.w("Peripheral", "Failed to close gatt: ${e.message}")
                 }
                 val error = if (status != BluetoothGatt.GATT_SUCCESS) {
-                    "Connection failed. Status: $status (${statusCodeName(status)}), State: $newState"
+                    "Connection failed. Status: $status (${connectionStatusName(status)}), State: $newState"
                 } else {
                     "Disconnected. State: $newState"
                 }
@@ -230,7 +230,7 @@ class Peripheral(
                     discoverAttempts += 1
                     Log.w(
                         "Peripheral",
-                        "Service discovery failed (status $status ${statusCodeName(status)}), retrying attempt $discoverAttempts/$maxDiscoverAttempts"
+                        "Service discovery failed (status $status ${attStatusName(status)}), retrying attempt $discoverAttempts/$maxDiscoverAttempts"
                     )
                     retryHandler.postDelayed({
                         if (this@Peripheral.connected) {
@@ -249,7 +249,7 @@ class Peripheral(
                 this@Peripheral.services = listOf()
                 this@Peripheral.onServicesDiscovered?.invoke(
                     false,
-                    "No services discovered. Status $status (${statusCodeName(status)}) after ${discoverAttempts + 1} attempt(s)"
+                    "No services discovered. Status $status (${attStatusName(status)}) after ${discoverAttempts + 1} attempt(s)"
                 )
             } else {
                 discoverAttempts = 0
@@ -364,7 +364,7 @@ class Peripheral(
                     this@Peripheral.activeWrite = null
                     current.invoke?.reject(
                         "Write to characteristic ${characteristic.uuid} failed after ${current.attempt} attempts with status $status (${
-                            statusCodeName(
+                            attStatusName(
                                 status
                             )
                         })"
@@ -406,7 +406,7 @@ class Peripheral(
             } else {
                 op.invoke.reject(
                     "Read from characteristic ${characteristic.uuid} failed after ${op.attempt} attempts with status $status (${
-                        statusCodeName(
+                        attStatusName(
                             status
                         )
                     })"
@@ -446,7 +446,7 @@ class Peripheral(
             } else {
                 op.invoke.reject(
                     "descriptor write failed after ${op.attempt} attempts with status $status (${
-                        statusCodeName(
+                        attStatusName(
                             status
                         )
                     })"
@@ -931,7 +931,7 @@ class Peripheral(
                 }
                 op.invoke?.reject(
                     "Failed to start write on characteristic ${charac.uuid} after ${op.attempt} attempts: status $status (${
-                        statusCodeName(
+                        attStatusName(
                             status
                         )
                     })"
@@ -1102,7 +1102,7 @@ class Peripheral(
                 } else {
                     op.invoke.reject(
                         "Failed to start descriptor write after ${op.attempt} attempts: status $status (${
-                            statusCodeName(
+                            attStatusName(
                                 status
                             )
                         })"
@@ -1132,30 +1132,62 @@ class Peripheral(
         }
     }
 
-    private fun statusCodeName(status: Int): String {
-        // Translate the BluetoothStatusCodes / BluetoothGatt error code into a
-        // human readable name. Only the GATT-relevant codes are mapped here.
+    // The status passed to the GATT callbacks lives in two disjoint code spaces that
+    // overlap numerically, so they need separate translations: the ATT/GATT errors
+    // reported by the attribute operations, and the connection reasons reported by
+    // onConnectionStateChange. Getting these mixed up hides exactly the codes that
+    // matter for bonding (ATT 5 and 15).
+
+    /** Names an ATT/GATT error as reported by the characteristic, descriptor,
+     * discovery and MTU callbacks. Also covers the BluetoothStatusCodes write errors. */
+    private fun attStatusName(status: Int): String {
         return when (status) {
-            0 -> "SUCCESS"
+            0 -> "GATT_SUCCESS"
             1 -> "GATT_INVALID_HANDLE"
             2 -> "GATT_READ_NOT_PERMITTED"
             3 -> "GATT_WRITE_NOT_PERMITTED"
             4 -> "GATT_INVALID_PDU"
+            // the peripheral wants us to bond before it hands out this attribute
             5 -> "GATT_INSUFFICIENT_AUTHENTICATION"
             6 -> "GATT_REQUEST_NOT_SUPPORTED"
             7 -> "GATT_INVALID_OFFSET"
-            8 -> "GATT_ERROR"
-            13 -> "GATT_CONN_TIMEOUT"
-            15 -> "GATT_CONN_TERMINATE_PEER_USER"
-            16 -> "GATT_CONN_TERMINATE_LOCAL_HOST"
-            19 -> "GATT_CONN_FAIL_ESTABLISH"
-            22 -> "GATT_CONN_LMP_TIMEOUT"
-            62 -> "GATT_CONN_CANCEL"
+            8 -> "GATT_INSUFFICIENT_AUTHORIZATION"
+            9 -> "GATT_PREPARE_QUEUE_FULL"
+            10 -> "GATT_ATTR_NOT_FOUND"
+            11 -> "GATT_ATTR_NOT_LONG"
+            12 -> "GATT_INSUFFICIENT_KEY_SIZE"
+            13 -> "GATT_INVALID_ATTRIBUTE_LENGTH"
+            14 -> "GATT_UNLIKELY_ERROR"
+            // same as 5: needs an encrypted link, i.e. a bond
+            15 -> "GATT_INSUFFICIENT_ENCRYPTION"
+            16 -> "GATT_UNSUPPORTED_GROUP_TYPE"
+            17 -> "GATT_INSUFFICIENT_RESOURCES"
             133 -> "GATT_ERROR (133)"
-            137 -> "GATT_CONN_TERMINATE_DUE_TO_MIC_FAILURE"
-            257 -> "GATT_FAILURE"
+            143 -> "GATT_CONNECTION_CONGESTED"
             200 -> "ERROR_GATT_WRITE_NOT_ALLOWED"
             201 -> "ERROR_GATT_WRITE_REQUEST_BUSY"
+            257 -> "GATT_FAILURE"
+            else -> "UNKNOWN ($status)"
+        }
+    }
+
+    /** Names a connection status as reported by onConnectionStateChange. These are
+     * mostly HCI disconnect reasons and do not share the ATT error space. */
+    private fun connectionStatusName(status: Int): String {
+        return when (status) {
+            0 -> "GATT_SUCCESS"
+            1 -> "GATT_CONN_L2C_FAILURE"
+            8 -> "GATT_CONN_TIMEOUT"
+            19 -> "GATT_CONN_TERMINATE_PEER_USER"
+            22 -> "GATT_CONN_TERMINATE_LOCAL_HOST"
+            34 -> "GATT_CONN_LMP_TIMEOUT"
+            62 -> "GATT_CONN_FAIL_ESTABLISH"
+            129 -> "GATT_INTERNAL_ERROR"
+            133 -> "GATT_ERROR (133)"
+            // the link could not be encrypted, usually a bond that the peripheral
+            // no longer has (e.g. after a factory reset)
+            137 -> "GATT_CONN_TERMINATE_DUE_TO_MIC_FAILURE"
+            256 -> "GATT_CONN_CANCEL"
             else -> "UNKNOWN ($status)"
         }
     }
