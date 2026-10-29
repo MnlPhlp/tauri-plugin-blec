@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.19.0](https://github.com/MnlPhlp/tauri-plugin-blec/compare/v0.18.0...v0.19.0) (2026-10-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* fail on ambiguous characteristic lookups instead of using first ([#77](https://github.com/MnlPhlp/tauri-plugin-blec/issues/77))
+
+### Features
+
+* **blec:** run blocking API on internal tokio runtime fallback ([#75](https://github.com/MnlPhlp/tauri-plugin-blec/issues/75)) ([d71586f](https://github.com/MnlPhlp/tauri-plugin-blec/commit/d71586fa60c4d3b203d89db8df12037d75746216))
+
+
+### Bug Fixes
+
+* **android:** don't leave a scan stuck after Bluetooth is turned off ([#72](https://github.com/MnlPhlp/tauri-plugin-blec/issues/72)) ([94b7e93](https://github.com/MnlPhlp/tauri-plugin-blec/commit/94b7e93e40251c02b68d72c45e40c02d8569be91))
+* **android:** share the negotiated MTU across Peripheral clones ([#73](https://github.com/MnlPhlp/tauri-plugin-blec/issues/73)) ([55aaaf6](https://github.com/MnlPhlp/tauri-plugin-blec/commit/55aaaf61924afcb0f933b54c62380add0500910d))
+* fail on ambiguous characteristic lookups instead of using first ([#77](https://github.com/MnlPhlp/tauri-plugin-blec/issues/77)) ([1468e06](https://github.com/MnlPhlp/tauri-plugin-blec/commit/1468e06c6a3f6165448096cd7a4c1abda5dc414c))
+
 ## [0.18.0](https://github.com/MnlPhlp/tauri-plugin-blec/compare/v0.17.0...v0.18.0) (2026-10-13)
 
 
