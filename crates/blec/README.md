@@ -33,6 +33,14 @@ async fn example() -> Result<(), blec::Error> {
 
 `blec::init()` creates the handler once; `blec::get_handler()` returns it from anywhere afterwards.
 
+A characteristic is found by its UUID, and the service is optional (`None` above). GATT allows
+the same characteristic UUID in several services. In that case pass the service; without it, the
+operation fails with `Error::AmbiguousCharacteristic` instead of guessing. `unsubscribe` without a
+service unsubscribes the characteristic in every service. Not supported yet: the same
+characteristic UUID twice within one service, and the same service UUID twice on one device
+(btleplug can't tell these instances apart). blec logs a warning at connect when a device has
+either.
+
 The API works from any async executor (tokio, `futures_lite::future::block_on`, smol, ...).
 Internally blec and btleplug need tokio. Called from inside a tokio runtime, blec uses that
 runtime; otherwise it starts a single background thread with its own small tokio runtime the

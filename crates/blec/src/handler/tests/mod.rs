@@ -5,6 +5,7 @@
 mod connect;
 mod disconnect;
 mod helpers;
+mod lookup;
 mod multi;
 mod notify;
 mod runtime;

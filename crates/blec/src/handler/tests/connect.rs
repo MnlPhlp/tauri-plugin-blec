@@ -27,7 +27,7 @@ async fn connect_happy_path() {
 
     // characteristics of every service are usable
     handler
-        .send_data(CHARAC, None, &[1, 2, 3], WriteType::WithResponse)
+        .send_data(CHARAC, Some(SERVICE), &[1, 2, 3], WriteType::WithResponse)
         .await
         .unwrap();
     handler
@@ -395,27 +395,27 @@ async fn write_and_read_errors_are_reported() {
     device.set_write_behaviour(OpBehaviour::Fail(FailKind::NotConnected));
     assert!(matches!(
         handler
-            .send_data(CHARAC, None, &[1], WriteType::WithResponse)
+            .send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
             .await,
         Err(Error::Btleplug(_))
     ));
     device.set_write_behaviour(OpBehaviour::Hang);
     assert!(matches!(
         handler
-            .send_data(CHARAC, None, &[1], WriteType::WithResponse)
+            .send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
             .await,
         Err(Error::Timeout(_))
     ));
     device.set_read_behaviour(OpBehaviour::Hang);
     assert!(matches!(
-        handler.recv_data(CHARAC, None).await,
+        handler.recv_data(CHARAC, Some(SERVICE)).await,
         Err(Error::Timeout(_))
     ));
     // the connection itself is unaffected by failed operations
     assert!(handler.is_connected());
     device.set_write_behaviour(OpBehaviour::Ok);
     handler
-        .send_data(CHARAC, None, &[1], WriteType::WithResponse)
+        .send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
         .await
         .unwrap();
 }

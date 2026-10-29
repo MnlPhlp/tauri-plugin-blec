@@ -2,6 +2,7 @@ use serde::{Serialize, Serializer};
 use tokio::sync::mpsc::error::SendError;
 
 use thiserror::Error;
+use uuid::Uuid;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Btleplug error: {0}")]
@@ -12,6 +13,15 @@ pub enum Error {
 
     #[error("Characteristic {0} not available")]
     CharacNotAvailable(String),
+
+    /// More than one characteristic matched. GATT allows the same UUID in
+    /// several services, and even several times in one service.
+    #[error(
+        "Characteristic {uuid} is ambiguous, it exists {} times (services: {services:?}); \
+        pass the service. Duplicate characteristics within one service are not supported",
+        services.len()
+    )]
+    AmbiguousCharacteristic { uuid: Uuid, services: Vec<Uuid> },
 
     #[error("No device connected")]
     NoDeviceConnected,

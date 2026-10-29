@@ -254,9 +254,16 @@ class Peripheral(
             } else {
                 discoverAttempts = 0
                 this@Peripheral.services = gatt.services
+                // the instance outlives a connection, drop the previous one's characteristics
+                this@Peripheral.characteristics.clear()
                 for (s in gatt.services) {
                     for (c in s.characteristics) {
-                        this@Peripheral.characteristics[Pair(c.uuid, c.service.uuid)] = c
+                        val key = Pair(c.uuid, c.service.uuid)
+                        if (this@Peripheral.characteristics.containsKey(key)) {
+                            // GATT allows this, but the key can't tell the instances apart
+                            Log.w("Peripheral", "Characteristic ${c.uuid} exists more than once in service ${c.service.uuid}, only the last one is usable")
+                        }
+                        this@Peripheral.characteristics[key] = c
                     }
                 }
                 this@Peripheral.onServicesDiscovered?.invoke(true, "")

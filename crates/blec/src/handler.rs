@@ -92,13 +92,34 @@ impl Link {
         *self.connected.borrow()
     }
 
+    /// The characteristic with this uuid, in `service` or in any service.
+    /// Fails when more than one matches rather than guessing.
     fn get_charac(&self, uuid: Uuid, service: Option<Uuid>) -> Result<&Characteristic, Error> {
         trace!("getting characteristic {uuid} from service {service:?}");
-        let charac = self
+        match self.get_characs(uuid, service)?.as_slice() {
+            [charac] => Ok(charac),
+            matches => Err(Error::AmbiguousCharacteristic {
+                uuid,
+                services: matches.iter().map(|c| c.service_uuid).collect(),
+            }),
+        }
+    }
+
+    /// Every characteristic with this uuid, in `service` or in any service.
+    fn get_characs(
+        &self,
+        uuid: Uuid,
+        service: Option<Uuid>,
+    ) -> Result<Vec<&Characteristic>, Error> {
+        let characs: Vec<_> = self
             .characs
             .iter()
-            .find(|c| c.uuid == uuid && service.map_or(true, |s| c.service_uuid == s));
-        charac.ok_or(Error::CharacNotAvailable(uuid.to_string()))
+            .filter(|c| c.uuid == uuid && service.map_or(true, |s| c.service_uuid == s))
+            .collect();
+        if characs.is_empty() {
+            return Err(Error::CharacNotAvailable(uuid.to_string()));
+        }
+        Ok(characs)
     }
 }
 
@@ -404,6 +425,32 @@ impl Handler {
         Ok((link.peripheral.clone(), charac))
     }
 
+    /// Like [`Self::link_charac`], but returns every match instead of failing
+    /// on several.
+    fn link_characs(
+        &self,
+        address: &str,
+        c: Uuid,
+        service: Option<Uuid>,
+    ) -> Result<(Peripheral, Vec<Characteristic>), Error> {
+        let links = self.links();
+        let link = links
+            .get(address)
+            .filter(|link| !link.temporary)
+            .ok_or_else(|| Error::DeviceNotConnected(address.to_string()))?;
+        let mut characs: Vec<Characteristic> = vec![];
+        for charac in link.get_characs(c, service)? {
+            // the backends can't tell apart duplicates within one service
+            if !characs
+                .iter()
+                .any(|other| other.service_uuid == charac.service_uuid)
+            {
+                characs.push(charac.clone());
+            }
+        }
+        Ok((link.peripheral.clone(), characs))
+    }
+
     /// Returns mtu (Maximum Transfer Unit) of the connected device
     /// # Errors
     /// Returns an error if no device or more than one device is connected
@@ -610,9 +657,26 @@ impl Handler {
             .await?;
         }
         debug!("service discovery done");
-        let mut characs = vec![];
+        let mut characs: Vec<Characteristic> = vec![];
+        let mut service_uuids = vec![];
         for s in device.services() {
+            if service_uuids.contains(&s.uuid) {
+                warn!(
+                    "{address} has service {} more than once, its characteristics are ambiguous",
+                    s.uuid
+                );
+            }
+            service_uuids.push(s.uuid);
             for c in &s.characteristics {
+                if characs
+                    .iter()
+                    .any(|other| other.uuid == c.uuid && other.service_uuid == c.service_uuid)
+                {
+                    warn!(
+                        "{address} has characteristic {} more than once in service {}, it can not be used",
+                        c.uuid, c.service_uuid
+                    );
+                }
                 characs.push(c.clone());
             }
         }
@@ -1165,6 +1229,7 @@ impl Handler {
     /// Sends data to the given characteristic of the device with this address
     /// # Errors
     /// Returns an error if the device is not connected or the characteristic is not available
+    /// or ambiguous (see [`Error::AmbiguousCharacteristic`])
     /// or if the write operation fails
     pub async fn send_data_to(
         &self,
@@ -1217,6 +1282,7 @@ impl Handler {
     /// Returns the data as a vector of bytes
     /// # Errors
     /// Returns an error if the device is not connected or the characteristic is not available
+    /// or ambiguous (see [`Error::AmbiguousCharacteristic`])
     /// or if the read operation fails
     pub async fn recv_data_from(
         &self,
@@ -1268,6 +1334,7 @@ impl Handler {
     /// the device disconnects
     /// # Errors
     /// Returns an error if the device is not connected or the characteristic is not available
+    /// or ambiguous (see [`Error::AmbiguousCharacteristic`])
     /// or if the subscribe operation fails
     pub async fn subscribe_to(
         &self,
@@ -1315,7 +1382,7 @@ impl Handler {
 
     /// Unsubscribe from notifications for the given characteristic of the device with this address
     /// This will also remove the callbacks from the list of listeners. Without
-    /// a `service`, the callbacks of the characteristic in every service are removed.
+    /// a `service`, the characteristic is unsubscribed in every service that has it.
     /// # Errors
     /// Returns an error if the device is not connected or the characteristic is not available
     /// or if the unsubscribe operation fails
@@ -1328,19 +1395,21 @@ impl Handler {
         crate::rt::compat(async move {
             let gatt_lock = self.link_gatt_lock(address)?;
             let _gatt_guard = gatt_lock.lock().await;
-            let (dev, charac) = self.link_charac(address, c, service)?;
-            run_with_timeout(
-                dev.unsubscribe(&charac),
-                "unsubscribe",
-                self.timeouts().subscribe,
-            )
-            .await?;
+            let (dev, characs) = self.link_characs(address, c, service)?;
+            for charac in &characs {
+                run_with_timeout(
+                    dev.unsubscribe(charac),
+                    "unsubscribe",
+                    self.timeouts().subscribe,
+                )
+                .await?;
+            }
             let listeners = self.links().get(address).map(|link| link.listeners.clone());
             if let Some(listeners) = listeners {
                 listeners
                     .lock()
                     .await
-                    .retain(|l| l.uuid != charac.uuid || service.is_some_and(|s| l.service != s));
+                    .retain(|l| l.uuid != c || service.is_some_and(|s| l.service != s));
             }
             Ok(())
         })

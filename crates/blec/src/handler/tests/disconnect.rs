@@ -51,7 +51,7 @@ async fn link_drops_mid_session() {
     assert_eq!(drain(&mut updates), vec![false]);
     assert!(matches!(
         handler
-            .send_data(CHARAC, None, &[1], WriteType::WithResponse)
+            .send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
             .await,
         Err(Error::NoDeviceConnected)
     ));
@@ -88,7 +88,7 @@ async fn operation_on_silently_gone_link_fails_without_state_change() {
     assert!(device.drop_link_silently());
 
     let result = handler
-        .send_data(CHARAC, None, &[1], WriteType::WithResponse)
+        .send_data(CHARAC, Some(SERVICE), &[1], WriteType::WithResponse)
         .await;
     assert!(matches!(result, Err(Error::Btleplug(_))), "{result:?}");
     // nobody told the handler; it must still allow a clean disconnect
