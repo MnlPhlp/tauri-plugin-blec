@@ -26,7 +26,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 btleplug.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 uuid.workspace = true
 once_cell.workspace = true
 tracing.workspace = true
@@ -53,6 +53,7 @@ embedded-dex = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
+futures-lite = "2"
 rand = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

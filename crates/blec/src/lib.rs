@@ -12,6 +12,10 @@
 //! # }
 //! ```
 //!
+//! The API works from any async executor. blec and btleplug need tokio
+//! internally: inside a tokio runtime blec uses that one, otherwise it starts a
+//! single background thread with its own small runtime on first use.
+//!
 //! For a Tauri app use the `tauri-plugin-blec` crate instead, which wraps this
 //! one in a plugin with a JavaScript API.
 
@@ -27,6 +31,7 @@ mod handler;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 pub mod models;
+mod rt;
 
 pub use connection::Connection;
 pub use error::{Error, Result};
@@ -48,12 +53,15 @@ static HANDLER: OnceCell<Handler> = OnceCell::new();
 /// # Errors
 /// Returns an error if the platform backend cannot be set up.
 pub async fn init() -> Result<&'static Handler> {
-    if let Some(handler) = HANDLER.get() {
-        return Ok(handler);
-    }
-    let handler = Handler::new().await?;
-    let _ = HANDLER.set(handler);
-    get_handler()
+    rt::compat(async {
+        if let Some(handler) = HANDLER.get() {
+            return Ok(handler);
+        }
+        let handler = Handler::new().await?;
+        let _ = HANDLER.set(handler);
+        get_handler()
+    })
+    .await
 }
 
 /// Returns the BLE handler.
@@ -76,7 +84,7 @@ pub fn get_handler() -> Result<&'static Handler> {
 #[allow(unused)]
 pub async fn check_permissions(ask_if_denied: bool) -> Result<bool> {
     #[cfg(target_os = "android")]
-    return android::check_permissions(ask_if_denied).await;
+    return rt::compat(android::check_permissions(ask_if_denied)).await;
     #[cfg(not(target_os = "android"))]
     return Ok(true);
 }
