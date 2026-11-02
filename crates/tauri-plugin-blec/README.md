@@ -81,6 +81,7 @@ requirement.
 
 Call `checkPermissions(true)` from the frontend (or `blec::check_permissions(true)` from rust)
 before scanning; it asks the user and, if they denied before, sends them to the app settings.
+`enableBluetooth()` (`blec::enable_bluetooth()`) asks the user to turn Bluetooth on.
 
 ### IOS Setup
 

@@ -82,6 +82,14 @@ export async function checkPermissions(askIfDenied = true): Promise<boolean> {
 }
 
 /**
+ * Ask the user to turn Bluetooth on, unless it is on already (android only).
+ * Only starts the request: whether the user agreed shows in `getAdapterState()`.
+ */
+export async function enableBluetooth() {
+  await invoke("plugin:blec|enable_bluetooth");
+}
+
+/**
  * Register a handler to receive updates when the connection state changes.
  * After every connect and disconnect of any device it receives whether at
  * least one device is connected; use `getConnectionEvents()` to learn which

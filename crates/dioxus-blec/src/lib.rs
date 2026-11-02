@@ -251,6 +251,17 @@ impl Ble {
         blec::check_permissions(ask_if_denied).await
     }
 
+    /// Asks the user to turn Bluetooth on, unless it is on already.
+    ///
+    /// Android only; does nothing elsewhere. Only starts the request: whether
+    /// the user agreed shows in [`blec::Handler::get_adapter_state`].
+    ///
+    /// # Errors
+    /// Returns an error if the bluetooth permission is missing.
+    pub async fn enable_bluetooth(self) -> Result<()> {
+        blec::enable_bluetooth().await
+    }
+
     /// Scans for `timeout_ms`, streaming the results into [`devices`](Self::devices).
     ///
     /// Clears the previous results first. Returns once the scan has started;

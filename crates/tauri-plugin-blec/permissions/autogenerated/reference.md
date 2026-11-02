@@ -22,6 +22,7 @@ Default permissions for the plugin
 - `allow-scanning-state`
 - `allow-list-services`
 - `allow-check-permissions`
+- `allow-enable-bluetooth`
 - `allow-get-adapter-state`
 - `allow-mtu`
 - `allow-set-write-behavior`
@@ -215,6 +216,32 @@ Enables the disconnect_all command without any pre-configured scope.
 <td>
 
 Denies the disconnect_all command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:allow-enable-bluetooth`
+
+</td>
+<td>
+
+Enables the enable_bluetooth command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`blec:deny-enable-bluetooth`
+
+</td>
+<td>
+
+Denies the enable_bluetooth command without any pre-configured scope.
 
 </td>
 </tr>

@@ -29,7 +29,7 @@ class BlecPlugin(private val context: Context) {
     // operations on one device run while another connects, and scan results
     // are written from the main thread.
 
-    /** The peripherals the last scan reported, by address. */
+    /** The peripherals scans reported, by address; a scan start keeps the old ones. */
     var devices: MutableMap<String, Peripheral> = ConcurrentHashMap()
 
     /** The peripherals with a `BluetoothGatt`, which must not be replaced. */
@@ -63,6 +63,7 @@ class BlecPlugin(private val context: Context) {
             "events" -> events(invoke)
             "adapter_state" -> client.adapterState(invoke)
             "check_permissions" -> checkPermissions(invoke)
+            "enable_bluetooth" -> enableBluetooth(invoke)
             "connect" -> connect(invoke)
             "disconnect" -> disconnect(invoke)
             "is_connected" -> isConnected(invoke)
@@ -94,6 +95,18 @@ class BlecPlugin(private val context: Context) {
             return
         }
         block(device)
+    }
+
+    private fun enableBluetooth(invoke: Invoke) {
+        // the request needs BLUETOOTH_CONNECT from android 12 on
+        if (!hasBTPermissions()) {
+            invoke.reject("enable_bluetooth: Missing bluetooth permission!")
+            return
+        }
+        if (client.adapter()?.isEnabled == false) {
+            client.requestEnable()
+        }
+        invoke.resolve()
     }
 
     private fun clearPeripherals(invoke: Invoke) {

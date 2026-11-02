@@ -691,7 +691,7 @@ impl Handler {
     /// Otherwise [`Self::devices`] maps addresses to the peripheral a scan last reported
     /// for them, and that mapping outlives the backend's own record of the
     /// peripheral: CoreBluetooth forgets a peripheral as soon as its link goes
-    /// down, and the android side clears its device map whenever a scan starts.
+    /// down, and the android side clears its device map on `clear_peripherals`.
     /// The stale handle is still listed by `peripherals()`, so a device the user
     /// connected to once looks perfectly available while every connect fails
     /// with "Peripheral no longer available" until a new advertisement arrives.
@@ -980,8 +980,9 @@ impl Handler {
         trace!("handle_disconnect: DeviceDisconnected event for {peripheral_id}");
         info!("Handling disconnect for {peripheral_id}");
         let Some(address) = self.link_address(&peripheral_id) else {
-            // event not for a device we are connected to, ignore
-            warn!("Unexpected disconnect event for device {peripheral_id}, no link to it");
+            // btleplug's CoreBluetooth backend reports a user-initiated disconnect twice: from
+            // Peripheral::disconnect and from didDisconnectPeripheral. The first clears the link.
+            debug!("Ignoring disconnect event for {peripheral_id}, no link to it");
             return Ok(());
         };
         info!("disconnecting {address}");
@@ -1030,26 +1031,25 @@ impl Handler {
                 }
             }
             let adapter = self.get_or_init_adapter().await?;
-            {
-                let mut state = self.state.lock().await;
-                // stop any ongoing scan (best-effort — scan may have already
-                // been stopped by the polling task)
-                if let Some(handle) = state.scan_task.take() {
-                    handle.abort();
-                    let _ = adapter.stop_scan().await;
-                }
-                // start a new scan
-                ALLOW_IBEACONS.store(allow_ibeacons, std::sync::atomic::Ordering::Release);
-                adapter
-                    .start_scan(btleplug::api::ScanFilter::default())
-                    .await?;
-            }
-            self.send_scan_update(true).await;
+            // the new scan task is stored under the same lock that starts the scan: a concurrent
+            // discover in between would find no task to stop, and Android rejects a second scan
             let mut state = self.state.lock().await;
+            // stop any ongoing scan (best-effort — scan may have already
+            // been stopped by the polling task)
+            if let Some(handle) = state.scan_task.take() {
+                handle.abort();
+                let _ = adapter.stop_scan().await;
+            }
+            // start a new scan
+            ALLOW_IBEACONS.store(allow_ibeacons, std::sync::atomic::Ordering::Release);
+            adapter
+                .start_scan(btleplug::api::ScanFilter::default())
+                .await?;
             let mut self_devices = self.devices.clone();
             let adapter = adapter.clone();
+            // the device index is not cleared: a connect right after a scan starts resolves its
+            // device there
             state.scan_task = Some(tokio::task::spawn(async move {
-                self_devices.lock().await.clear();
                 let loops = std::cmp::max(1, timeout / 200);
                 let mut devices;
                 for _ in 0..loops {
@@ -1074,6 +1074,9 @@ impl Handler {
                     .map_err(|e| error!("Failed to stop scan: {e}"));
                 self.send_scan_update(false).await;
             }));
+            // takes the state lock itself
+            drop(state);
+            self.send_scan_update(true).await;
             Ok(())
         })
         .await
@@ -1684,8 +1687,10 @@ async fn filter_peripherals(discovered: &mut Vec<Peripheral>, filter: &ScanFilte
 async fn listen_notify(dev: Peripheral, listeners: Arc<Mutex<Vec<Listener>>>) {
     let mut stream = match dev.notifications().await {
         Ok(stream) => stream,
+        // the android side drops a peripheral from its connected devices on disconnect, so a
+        // disconnect landing before the first poll makes this fail without anything being wrong
         Err(e) => {
-            error!("failed to get notifications stream: {e}");
+            debug!("notification task stopping, no notification stream: {e}");
             return;
         }
     };

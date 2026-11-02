@@ -114,16 +114,8 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
                 ?: throw RuntimeException("No bluetooth manager found")
             val bluetoothAdapter: BluetoothAdapter = manager!!.adapter
                 ?: throw RuntimeException("No bluetooth adapter available")
-            // check if bluetooth is on
-            if (!bluetoothAdapter.isEnabled ) {
-                val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                val activity = currentActivity
-                if (activity != null) {
-                    activity.startActivity(enableBtIntent)
-                } else {
-                    // Without an activity the intent needs its own task.
-                    context.startActivity(enableBtIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
+            if (!bluetoothAdapter.isEnabled) {
+                requestEnable()
             }
             scanner = bluetoothAdapter.bluetoothLeScanner
                 ?: throw RuntimeException("No bluetooth scanner available for adapter")
@@ -137,8 +129,7 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
             return
         }
 
-        // clear old devices
-        this.plugin.devices.clear()
+        // old devices are kept: a connect right after a scan starts resolves its device here
 
         var filters: ArrayList<ScanFilter?>? = null
         if (args.services.isNotEmpty()) {
@@ -283,6 +274,23 @@ class BleClient(private val context: Context, private val plugin: BlecPlugin) {
         val res = JSONObject()
         res.put("result", device.toJsObject())
         invoke.resolve(res)
+    }
+
+    fun adapter(): BluetoothAdapter? {
+        manager = context.getSystemService(BluetoothManager::class.java)
+        return manager?.adapter
+    }
+
+    /** Shows the system dialog asking the user to turn Bluetooth on. */
+    fun requestEnable() {
+        val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+        val activity = currentActivity
+        if (activity != null) {
+            activity.startActivity(enableBtIntent)
+        } else {
+            // Without an activity the intent needs its own task.
+            context.startActivity(enableBtIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
     }
 
     fun adapterState(invoke: Invoke) {
