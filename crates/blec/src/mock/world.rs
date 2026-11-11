@@ -38,6 +38,9 @@ pub(super) struct WorldInner {
     pub(super) devices: Mutex<Vec<Arc<DeviceInner>>>,
     pub(super) scanning: AtomicBool,
     pub(super) adapter_state: Mutex<CentralState>,
+    /// Whether `add_peripheral` builds a peripheral from its id, see
+    /// [`MockWorld::set_add_peripheral_supported`].
+    pub(super) add_peripheral: AtomicBool,
 }
 
 impl Default for MockWorld {
@@ -57,6 +60,7 @@ impl MockWorld {
                 devices: Mutex::new(vec![]),
                 scanning: AtomicBool::new(false),
                 adapter_state: Mutex::new(CentralState::PoweredOn),
+                add_peripheral: AtomicBool::new(false),
             }),
         }
     }
@@ -116,6 +120,19 @@ impl MockWorld {
         self.emit(CentralEvent::StateUpdate(state));
     }
 
+    /// Whether the adapter's `add_peripheral` hands out a peripheral for an id
+    /// without a scan having seen it (default false: `NotSupported`, like
+    /// BlueZ, CoreBluetooth and the android backend). With `true` it behaves
+    /// like WinRT and returns any device of the world, advertising or not; a
+    /// `connect()` then succeeds as long as the device is in range. Unlike
+    /// WinRT, which makes a peripheral for any address, an id no device of the
+    /// world has gives `DeviceNotFound`.
+    pub fn set_add_peripheral_supported(&self, supported: bool) {
+        self.inner
+            .add_peripheral
+            .store(supported, Ordering::Release);
+    }
+
     #[must_use]
     pub fn adapter_state(&self) -> CentralState {
         self.inner.adapter_state.lock().unwrap().clone()
@@ -138,13 +155,14 @@ impl MockWorld {
         self.inner.events.subscribe()
     }
 
+    /// The devices a scan sees: in range and advertising.
     pub(super) fn in_range_devices(&self) -> Vec<Peripheral> {
         self.inner
             .devices
             .lock()
             .unwrap()
             .iter()
-            .filter(|d| d.in_range.load(Ordering::Acquire))
+            .filter(|d| d.is_in_range() && d.is_advertising())
             .cloned()
             .map(Peripheral::new)
             .collect()
@@ -417,6 +435,8 @@ pub(super) struct DeviceInner {
     pub(super) gatt: BTreeSet<Service>,
     events: broadcast::Sender<CentralEvent>,
     pub(super) in_range: AtomicBool,
+    /// Whether the device advertises, see [`DeviceHandle::set_advertising`].
+    pub(super) advertising: AtomicBool,
     /// Whether the backend still has a record of this peripheral. Only a known
     /// peripheral can be connected; see [`DeviceHandle::forget`].
     pub(super) known: AtomicBool,
@@ -439,6 +459,7 @@ impl DeviceInner {
             spec,
             events,
             in_range: AtomicBool::new(true),
+            advertising: AtomicBool::new(true),
             known: AtomicBool::new(true),
             connected: AtomicBool::new(false),
             discovered: AtomicBool::new(false),
@@ -460,6 +481,10 @@ impl DeviceInner {
 
     pub(super) fn is_in_range(&self) -> bool {
         self.in_range.load(Ordering::Acquire)
+    }
+
+    pub(super) fn is_advertising(&self) -> bool {
+        self.advertising.load(Ordering::Acquire)
     }
 
     pub(super) fn is_known(&self) -> bool {
@@ -580,6 +605,21 @@ impl DeviceHandle {
     #[must_use]
     pub fn is_in_range(&self) -> bool {
         self.0.is_in_range()
+    }
+
+    /// A device that stops advertising (default: advertising) no longer shows
+    /// up in scans or `peripherals()` but stays connectable while in range,
+    /// like one the OS still holds a link to or that only accepts connections
+    /// from bonded centrals. Only a handle the handler already has, a
+    /// retrieval or `add_peripheral` (see
+    /// [`MockWorld::set_add_peripheral_supported`]) reach it then.
+    pub fn set_advertising(&self, advertising: bool) {
+        self.0.advertising.store(advertising, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn is_advertising(&self) -> bool {
+        self.0.is_advertising()
     }
 
     /// The backend forgets its record of the peripheral: it stays in range and
