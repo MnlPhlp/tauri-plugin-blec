@@ -159,6 +159,114 @@ async fn connect_unknown_address_fails_cleanly() {
     assert_eq!(counter.load(Ordering::SeqCst), 0);
 }
 
+/// A device that does not advertise (Windows still holds its old link, or it
+/// only talks to bonded centrals) is never found by the scan. A backend that
+/// can make a peripheral from the address (WinRT's `add_peripheral`) reaches it
+/// anyway once the scan is over.
+#[tokio::test(start_paused = true)]
+async fn connect_by_address_when_the_scan_does_not_see_the_device() {
+    let (world, handler) = test_world();
+    world.set_add_peripheral_supported(true);
+    let device = stress_device(&world);
+    device.set_advertising(false);
+
+    let start = tokio::time::Instant::now();
+    let (on_disconnect, counter) = disconnect_counter();
+    handler
+        .connect(&device.address_string(), on_disconnect, false)
+        .await
+        .expect("connect by address");
+    assert!(
+        start.elapsed() >= Duration::from_secs(5),
+        "connected before the scan was over: {:?}",
+        start.elapsed()
+    );
+    assert!(handler.is_connected());
+    assert!(device.is_connected());
+    assert!(!handler.is_scanning().await, "scan left running");
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+    // the device index keeps the peripheral, so a reconnect needs no scan
+    handler.disconnect().await.expect("disconnect failed");
+    settle().await;
+    let start = tokio::time::Instant::now();
+    let (on_disconnect, _) = disconnect_counter();
+    handler
+        .connect(&device.address_string(), on_disconnect, false)
+        .await
+        .expect("reconnect by address");
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "reconnect scanned again: {:?}",
+        start.elapsed()
+    );
+    assert!(device.is_connected());
+}
+
+/// Without `add_peripheral` (BlueZ, CoreBluetooth, android) a device the scan
+/// does not see stays unknown, and nothing is tried on it.
+#[tokio::test(start_paused = true)]
+async fn connect_to_a_silent_device_fails_without_add_peripheral() {
+    let (world, handler) = test_world();
+    let device = stress_device(&world);
+    device.set_advertising(false);
+
+    let (on_disconnect, counter) = disconnect_counter();
+    let result = handler
+        .connect(&device.address_string(), on_disconnect, false)
+        .await;
+    assert!(
+        matches!(result, Err(Error::UnknownPeripheral(_))),
+        "{result:?}"
+    );
+    assert_eq!(device.count_ops(&Op::Connect), 0);
+    assert!(!handler.is_scanning().await, "scan left running");
+    assert_disconnected(handler).await;
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+}
+
+/// With `add_peripheral`, an address no device has still fails cleanly: the
+/// mock refuses to add it, WinRT adds it and the connect fails (modelled by a
+/// device out of range). Either way no link is left and the disconnect
+/// callback does not run.
+#[tokio::test(start_paused = true)]
+async fn connect_by_address_to_a_missing_device_fails_cleanly() {
+    let (world, handler) = test_world();
+    world.set_add_peripheral_supported(true);
+    let _other = other_device(&world);
+
+    let (on_disconnect, counter) = disconnect_counter();
+    let result = tokio::time::timeout(
+        Duration::from_secs(60),
+        handler.connect("11:22:33:44:55:66", on_disconnect, false),
+    )
+    .await
+    .expect("connect did not return");
+    assert!(
+        matches!(result, Err(Error::UnknownPeripheral(_))),
+        "{result:?}"
+    );
+    assert!(!handler.is_scanning().await, "scan left running");
+    assert_disconnected(handler).await;
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+    let device = stress_device(&world);
+    device.set_in_range(false);
+    let (on_disconnect, counter) = disconnect_counter();
+    let result = tokio::time::timeout(
+        Duration::from_secs(60),
+        handler.connect(&device.address_string(), on_disconnect, false),
+    )
+    .await
+    .expect("connect did not return");
+    assert!(matches!(result, Err(Error::Btleplug(_))), "{result:?}");
+    assert_eq!(device.count_ops(&Op::Connect), 3);
+    assert!(!device.is_connected());
+    assert_disconnected(handler).await;
+    settle().await;
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test(start_paused = true)]
 async fn connect_succeeds_after_retries() {
     let (world, handler) = test_world();

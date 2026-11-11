@@ -105,10 +105,21 @@ impl Central for Adapter {
             .ok_or(btleplug::Error::DeviceNotFound)
     }
 
-    async fn add_peripheral(&self, _address: &PeripheralId) -> btleplug::Result<Peripheral> {
-        Err(btleplug::Error::NotSupported(
-            "mock: add_peripheral".to_string(),
-        ))
+    /// `NotSupported` unless the world opted in with
+    /// [`MockWorld::set_add_peripheral_supported`]; then any device of the
+    /// world, advertising or not, and the backend knows it from now on.
+    async fn add_peripheral(&self, id: &PeripheralId) -> btleplug::Result<Peripheral> {
+        if !self.world.inner.add_peripheral.load(Ordering::Acquire) {
+            return Err(btleplug::Error::NotSupported(
+                "mock: add_peripheral".to_string(),
+            ));
+        }
+        let peripheral = self
+            .world
+            .device_by_id(id)
+            .ok_or(btleplug::Error::DeviceNotFound)?;
+        peripheral.inner().set_known(true);
+        Ok(peripheral)
     }
 
     async fn clear_peripherals(&self) -> btleplug::Result<()> {

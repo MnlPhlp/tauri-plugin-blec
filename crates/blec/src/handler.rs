@@ -4,8 +4,8 @@ use crate::models::{
     self, AdapterState, BleDevice, ConnectionUpdate, ScanFilter, Service, Timeouts,
 };
 use crate::ALLOW_IBEACONS;
+use btleplug::api::{BDAddr, CentralEvent, CentralState, RetrievePeripheralsOptions};
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _};
-use btleplug::api::{CentralEvent, CentralState, RetrievePeripheralsOptions};
 use btleplug::platform::PeripheralId;
 use futures::{Stream, StreamExt};
 use std::collections::HashMap;
@@ -30,6 +30,26 @@ use btleplug::platform::{Adapter, Manager, Peripheral};
 
 #[cfg(test)]
 mod tests;
+
+/// The backend's id for the device at `address`, for
+/// [`Central::add_peripheral`]. Only WinRT (and the mock) derive ids from
+/// addresses; BlueZ uses D-Bus paths, CoreBluetooth random UUIDs, and the
+/// android backend cannot add peripherals at all.
+fn peripheral_id_from_address(address: BDAddr) -> Option<PeripheralId> {
+    #[cfg(any(test, feature = "mock"))]
+    {
+        Some(crate::mock::peripheral_id(address))
+    }
+    #[cfg(all(target_os = "windows", not(any(test, feature = "mock"))))]
+    {
+        Some(PeripheralId::from(address))
+    }
+    #[cfg(not(any(target_os = "windows", test, feature = "mock")))]
+    {
+        let _ = address;
+        None
+    }
+}
 
 /// Upper bound for the scan [`Handler::scan_for`] runs to find an address that
 /// is not in the device index yet. It returns as soon as the address shows up.
@@ -696,7 +716,8 @@ impl Handler {
     /// connected to once looks perfectly available while every connect fails
     /// with "Peripheral no longer available" until a new advertisement arrives.
     /// Have the backend hand out a peripheral for the id instead of trusting the
-    /// index, and only fall back to a scan when the address is unknown entirely.
+    /// index, and only fall back to a scan when the address is unknown entirely,
+    /// and to [`Self::add_by_address`] when the scan does not see it either.
     async fn resolve_peripheral(
         &'static self,
         address: &str,
@@ -714,15 +735,38 @@ impl Handler {
             Some(device) => device,
             None => {
                 self.scan_for(address, allow_ibeacons).await;
-                self.devices
-                    .lock()
-                    .await
-                    .get(address)
-                    .cloned()
-                    .ok_or_else(|| Error::UnknownPeripheral(address.to_string()))?
+                let scanned = self.devices.lock().await.get(address).cloned();
+                match scanned {
+                    Some(device) => device,
+                    None => return self.add_by_address(address).await,
+                }
             }
         };
         Ok(self.reregister(address, device).await)
+    }
+
+    /// Has the backend make a peripheral straight from `address`, for a device
+    /// the scan did not see: one that does not advertise because the OS still
+    /// holds its old link, or only talks to bonded centrals. Only WinRT can do
+    /// that (see [`Central::add_peripheral`]); elsewhere, or when the backend
+    /// refuses, the address stays unknown.
+    async fn add_by_address(&'static self, address: &str) -> Result<Peripheral, Error> {
+        let unknown = || Error::UnknownPeripheral(address.to_string());
+        let id = BDAddr::from_str_delim(address)
+            .ok()
+            .and_then(peripheral_id_from_address)
+            .ok_or_else(unknown)?;
+        let adapter = self.get_or_init_adapter().await?;
+        let device = adapter.add_peripheral(&id).await.map_err(|e| {
+            debug!("{address} not found by the scan, and the adapter cannot add it: {e}");
+            unknown()
+        })?;
+        info!("{address} not found by the scan, connecting to it by address");
+        self.devices
+            .lock()
+            .await
+            .insert(address.to_string(), device.clone());
+        Ok(device)
     }
 
     /// Asks the backend to re-register the peripheral and puts whatever it

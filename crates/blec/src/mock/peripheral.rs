@@ -98,7 +98,8 @@ impl btleplug::api::Peripheral for Peripheral {
             advertisement_name: spec.name.clone(),
             tx_power_level: spec.tx_power_level,
             // no advertisements are received from a device that is out of range
-            rssi: if self.inner.is_in_range() {
+            // or does not advertise
+            rssi: if self.inner.is_in_range() && self.inner.is_advertising() {
                 spec.rssi
             } else {
                 None
