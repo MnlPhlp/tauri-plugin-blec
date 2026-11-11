@@ -147,7 +147,64 @@ struct HandlerState {
     connection_update_channel: Vec<mpsc::Sender<bool>>,
     connection_event_channel: Vec<mpsc::Sender<ConnectionUpdate>>,
     scan_update_channel: Vec<mpsc::Sender<bool>>,
-    scan_task: Option<tokio::task::JoinHandle<()>>,
+    /// The scan the application started through [`Handler::discover`].
+    scan: Option<Scan>,
+    /// Whether [`Handler::scan_for`] has the adapter scanning on its own,
+    /// because no scan of the application could do it.
+    address_scan: bool,
+}
+
+impl HandlerState {
+    /// The application's scan, while its task is still at work.
+    fn live_scan(&self) -> Option<&Scan> {
+        self.scan.as_ref().filter(|scan| !scan.task.is_finished())
+    }
+}
+
+/// Source of [`Scan::id`].
+static NEXT_SCAN_ID: AtomicU64 = AtomicU64::new(0);
+
+/// A scan the application started through [`Handler::discover`].
+///
+/// A connect needs the radio for itself, so it pauses the scan: the adapter
+/// stops scanning while the task keeps counting down the scan's time, and
+/// scanning starts again once the connect is over. The scan ends when its
+/// task does, at the time the application asked for, paused or not.
+struct Scan {
+    /// Tells this scan apart from the one that replaced it.
+    id: u64,
+    /// Polls the adapter and delivers the devices to the application.
+    task: tokio::task::JoinHandle<()>,
+    /// What the scan was started with, to start it again after a pause.
+    allow_ibeacons: bool,
+    /// Whether the adapter scan is stopped for a connect. Only written under
+    /// the state lock; the task reads it to skip its polls meanwhile.
+    paused: Arc<AtomicBool>,
+}
+
+/// Held by whoever may have paused the application's scan or started an
+/// address scan, see [`Handler::with_radio`]. When its future is dropped
+/// half way, the radio is given back by a task of its own.
+struct RadioGuard {
+    handler: &'static Handler,
+    armed: bool,
+}
+
+impl Drop for RadioGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let handler = self.handler;
+        // `rt::compat` drops its future inside a runtime
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                // after whoever connects next: it wants the scan paused as well
+                let _connecting = handler.connect_lock.lock().await;
+                handler.release_radio().await;
+            });
+        }
+    }
 }
 
 pub struct Handler {
@@ -318,7 +375,8 @@ impl Handler {
             state: Mutex::new(HandlerState {
                 connection_update_channel: vec![],
                 connection_event_channel: vec![],
-                scan_task: None,
+                scan: None,
+                address_scan: false,
                 scan_update_channel: vec![],
             }),
             write_timeout_in_ms: AtomicU32::new(0),
@@ -485,13 +543,10 @@ impl Handler {
         Ok(self.link_peripheral(address)?.mtu())
     }
 
-    /// Returns true if the adapter is scanning
+    /// Returns true while a scan started with [`discover`](Self::discover) is
+    /// running, also while a connect has it paused
     pub async fn is_scanning(&self) -> bool {
-        if let Some(handle) = &self.state.lock().await.scan_task {
-            !handle.is_finished()
-        } else {
-            false
-        }
+        self.state.lock().await.live_scan().is_some()
     }
 
     /// Takes a sender that will be used to send changes in the scanning status
@@ -581,83 +636,128 @@ impl Handler {
         on_disconnect: OnDisconnectHandler,
         allow_ibeacons: bool,
     ) -> Result<Connection, Error> {
-        crate::rt::compat(async move {
-            let _connecting = self.connect_lock.lock().await;
-            let mut device = self.resolve_peripheral(address, allow_ibeacons).await?;
-            // cancel any running discovery
-            let _ = self.stop_scan().await;
-            // connect to the given address
-            // try up to 3 times before returning an error
-            let mut connected = Ok(());
-            for i in 0..3 {
-                if let Err(e) = self.connect_device(address, device.clone(), false).await {
-                    if i < 2 {
-                        warn!("Failed to connect device, retrying in 1s: {e}");
-                        sleep(Duration::from_secs(1)).await;
-                        // A failed connect can be the backend having dropped its
-                        // record of the peripheral, so ask for a fresh one instead
-                        // of retrying with the handle that just failed.
-                        device = self.reregister(address, device).await;
-                        continue;
-                    }
-                    connected = Err(e);
-                } else {
+        crate::rt::compat(self.with_radio(self.connect_locked(
+            address,
+            on_disconnect,
+            allow_ibeacons,
+        )))
+        .await
+    }
+
+    /// Runs `fut` with the connect lock held, and gives the radio back to the
+    /// application's scan afterwards: `fut` may pause that scan
+    /// ([`Self::pause_scan`]) and scan for an address ([`Self::scan_for`])
+    /// without cleaning up, however it ends and even when it is dropped.
+    async fn with_radio<F: Future>(&'static self, fut: F) -> F::Output {
+        let _connecting = self.connect_lock.lock().await;
+        let mut guard = RadioGuard {
+            handler: self,
+            armed: true,
+        };
+        let output = fut.await;
+        self.release_radio().await;
+        guard.armed = false;
+        output
+    }
+
+    /// [`Self::connect`] with the connect lock held, see [`Self::with_radio`].
+    async fn connect_locked(
+        &'static self,
+        address: &str,
+        on_disconnect: OnDisconnectHandler,
+        allow_ibeacons: bool,
+    ) -> Result<Connection, Error> {
+        let (mut device, mut may_rescan) = self.resolve_peripheral(address, allow_ibeacons).await?;
+        // connect to the given address
+        // try up to 3 times before returning an error
+        let mut connected = Ok(());
+        for i in 0..3 {
+            // No discovery while connecting (android's `connectGatt` is
+            // unreliable next to a scan). The application's scan goes on
+            // once the connect is over; the rescan below has it running
+            // again, so this is done for every try.
+            self.pause_scan().await;
+            match self.connect_device(address, device.clone(), false).await {
+                Ok(()) => {
                     connected = Ok(());
                     break;
                 }
-            }
-            if let Err(e) = connected {
-                error!("Failed to connect device: {e}");
-                // A `connectGatt` may still be pending; cancel it so the device is
-                // not left half-connected.
-                if let Ok(device) = self.link_peripheral(address) {
-                    if let Err(e) = device.disconnect().await {
-                        warn!("Failed to cancel the pending connection: {e}");
+                Err(e) if i < 2 => {
+                    warn!("Failed to connect device, retrying in 1s: {e}");
+                    sleep(Duration::from_secs(1)).await;
+                    // A failed connect can be the backend having dropped its
+                    // record of the peripheral, so ask for a fresh one instead
+                    // of retrying with the handle that just failed.
+                    match self.reregister(address, &device).await {
+                        Some(fresh) => device = fresh,
+                        // The backend has nothing for the id either: only a
+                        // scan brings the device back. Once per connect.
+                        None if may_rescan => {
+                            may_rescan = false;
+                            match self.rescan(address, allow_ibeacons).await {
+                                Ok(found) => device = found,
+                                Err(e) => {
+                                    connected = Err(e);
+                                    break;
+                                }
+                            }
+                        }
+                        None => {}
                     }
                 }
-                self.clear_link(address, None).await;
+                Err(e) => connected = Err(e),
+            }
+        }
+        if let Err(e) = connected {
+            error!("Failed to connect device: {e}");
+            // A `connectGatt` may still be pending; cancel it so the device is
+            // not left half-connected.
+            if let Ok(device) = self.link_peripheral(address) {
+                if let Err(e) = device.disconnect().await {
+                    warn!("Failed to cancel the pending connection: {e}");
+                }
+            }
+            self.clear_link(address, None).await;
+            return Err(e);
+        }
+        debug!("connecting services");
+        // discover service/characteristics (no lock held during GATT op)
+        let characs = match self.connect_services(address).await {
+            Ok(characs) => characs,
+            Err(e) => {
+                // The link is up but unusable — tear it down instead of
+                // returning with a connected device the caller doesn't know about.
+                error!("Failed to discover services: {e}");
+                if let Err(e) = self.disconnect_device(address).await {
+                    warn!("Failed to disconnect after failed service discovery: {e}");
+                }
                 return Err(e);
             }
-            debug!("connecting services");
-            // discover service/characteristics (no lock held during GATT op)
-            let characs = match self.connect_services(address).await {
-                Ok(characs) => characs,
-                Err(e) => {
-                    // The link is up but unusable — tear it down instead of
-                    // returning with a connected device the caller doesn't know about.
-                    error!("Failed to discover services: {e}");
-                    if let Err(e) = self.disconnect_device(address).await {
-                        warn!("Failed to disconnect after failed service discovery: {e}");
-                    }
-                    return Err(e);
-                }
+        };
+        {
+            let mut links = self.links();
+            let Some(link) = links.get_mut(address) else {
+                // the link dropped during service discovery and is cleared already
+                warn!("{address} disconnected during service discovery");
+                return Err(Error::ConnectionFailed);
             };
-            {
-                let mut links = self.links();
-                let Some(link) = links.get_mut(address) else {
-                    // the link dropped during service discovery and is cleared already
-                    warn!("{address} disconnected during service discovery");
-                    return Err(Error::ConnectionFailed);
-                };
-                // set callback to run on disconnect
-                link.on_disconnect = on_disconnect;
-                link.characs = characs;
-                debug!("Starting notification task");
-                // start background task for notifications, replacing the one of
-                // a connection that is reused
-                if let Some(task) = link.listen_task.take() {
-                    task.abort();
-                }
-                link.listen_task = Some(tokio::task::spawn(listen_notify(
-                    link.peripheral.clone(),
-                    link.listeners.clone(),
-                )));
+            // set callback to run on disconnect
+            link.on_disconnect = on_disconnect;
+            link.characs = characs;
+            debug!("Starting notification task");
+            // start background task for notifications, replacing the one of
+            // a connection that is reused
+            if let Some(task) = link.listen_task.take() {
+                task.abort();
             }
-            self.send_connection_update(address, true).await;
-            info!("connecting to {address} done");
-            Ok(Connection::new(self, address))
-        })
-        .await
+            link.listen_task = Some(tokio::task::spawn(listen_notify(
+                link.peripheral.clone(),
+                link.listeners.clone(),
+            )));
+        }
+        self.send_connection_update(address, true).await;
+        info!("connecting to {address} done");
+        Ok(Connection::new(self, address))
     }
 
     async fn connect_services(&self, address: &str) -> Result<Vec<Characteristic>, Error> {
@@ -703,7 +803,8 @@ impl Handler {
         Ok(characs)
     }
 
-    /// The peripheral for `address`, one the backend still knows about.
+    /// The peripheral for `address`, one the backend still knows about, and
+    /// whether a failed connect to it may be answered with [`Self::rescan`].
     ///
     /// A device with a link uses the link's peripheral: a connected device
     /// usually stops advertising, so the next scan would forget it.
@@ -718,31 +819,63 @@ impl Handler {
     /// Have the backend hand out a peripheral for the id instead of trusting the
     /// index, and only fall back to a scan when the address is unknown entirely,
     /// and to [`Self::add_by_address`] when the scan does not see it either.
+    ///
+    /// A backend that has nothing for the id any more (BlueZ removes an unpaired
+    /// device it has not seen for a few minutes) cannot be told apart from one
+    /// that just does not list it, so the index entry is used as it is here; the
+    /// caller forgets it and scans again with [`Self::rescan`] once a connect to
+    /// it failed.
     async fn resolve_peripheral(
         &'static self,
         address: &str,
         allow_ibeacons: bool,
-    ) -> Result<Peripheral, Error> {
+    ) -> Result<(Peripheral, bool), Error> {
         let linked = self
             .links()
             .get(address)
             .map(|link| link.peripheral.clone());
         if let Some(device) = linked {
-            return Ok(device);
+            return Ok((device, false));
         }
         let known = self.devices.lock().await.get(address).cloned();
-        let device = match known {
-            Some(device) => device,
-            None => {
-                self.scan_for(address, allow_ibeacons).await;
-                let scanned = self.devices.lock().await.get(address).cloned();
-                match scanned {
-                    Some(device) => device,
-                    None => return self.add_by_address(address).await,
-                }
+        match known {
+            Some(device) => {
+                let device = self.reregister(address, &device).await.unwrap_or(device);
+                Ok((device, true))
             }
-        };
-        Ok(self.reregister(address, device).await)
+            // just scanned for: another scan would not find anything new
+            None => Ok((self.find_peripheral(address, allow_ibeacons).await?, false)),
+        }
+    }
+
+    /// Scans for an `address` the device index does not have, falling back to
+    /// [`Self::add_by_address`] when the scan does not see it.
+    async fn find_peripheral(
+        &'static self,
+        address: &str,
+        allow_ibeacons: bool,
+    ) -> Result<Peripheral, Error> {
+        self.scan_for(address, allow_ibeacons).await;
+        let scanned = self.devices.lock().await.get(address).cloned();
+        match scanned {
+            Some(device) => Ok(self.reregister(address, &device).await.unwrap_or(device)),
+            None => self.add_by_address(address).await,
+        }
+    }
+
+    /// Forgets the index entry for `address` and looks for the device again,
+    /// for a peripheral from the index that failed to connect and that the
+    /// backend could not re-register. BlueZ drops an unpaired device it has not
+    /// seen for a few minutes and only brings it back while discovery runs;
+    /// without the scan every connect would keep failing on the stale handle.
+    async fn rescan(
+        &'static self,
+        address: &str,
+        allow_ibeacons: bool,
+    ) -> Result<Peripheral, Error> {
+        info!("the adapter has no record of {address} any more, scanning for it again");
+        self.devices.lock().await.remove(address);
+        self.find_peripheral(address, allow_ibeacons).await
     }
 
     /// Has the backend make a peripheral straight from `address`, for a device
@@ -772,13 +905,11 @@ impl Handler {
     /// Asks the backend to re-register the peripheral and puts whatever it
     /// hands back into the device index.
     ///
-    /// Best effort: a backend without a retrieval source (see
-    /// [`Central::retrieve_peripherals`]) or one that does not know the id keeps
-    /// `device`, which is still the caller's best guess.
-    async fn reregister(&'static self, address: &str, device: Peripheral) -> Peripheral {
-        let Ok(adapter) = self.get_or_init_adapter().await else {
-            return device;
-        };
+    /// Best effort: `None` from a backend without a retrieval source (see
+    /// [`Central::retrieve_peripherals`]) or one that does not know the id.
+    /// `device` is then still the caller's best guess.
+    async fn reregister(&'static self, address: &str, device: &Peripheral) -> Option<Peripheral> {
+        let adapter = self.get_or_init_adapter().await.ok()?;
         let id = device.id();
         let retrieved = adapter
             .retrieve_peripherals(RetrievePeripheralsOptions {
@@ -788,46 +919,175 @@ impl Handler {
             .await;
         let found = match retrieved {
             Ok(peripherals) => peripherals.into_iter().find(|p| p.id() == id),
-            Err(btleplug::Error::NotSupported(_)) => return device,
+            Err(btleplug::Error::NotSupported(_)) => return None,
             Err(e) => {
                 warn!("Failed to retrieve {address} from the adapter: {e}");
-                return device;
+                return None;
             }
         };
         let Some(found) = found else {
             warn!("adapter does not know {address} ({id}) anymore");
-            return device;
+            return None;
         };
         debug!("re-registered {address} with the adapter");
         self.devices
             .lock()
             .await
             .insert(address.to_string(), found.clone());
-        found
+        Some(found)
     }
 
-    /// Scans until `address` shows up or [`ADDRESS_SCAN_MS`] elapsed, so that
-    /// the device index knows the address. Best effort: errors are logged.
+    /// Has the adapter scan until `address` shows up in the device index or
+    /// [`ADDRESS_SCAN_MS`] elapsed. Best effort: errors are logged.
+    ///
+    /// A scan of the application that is running serves as well and is left
+    /// alone (a paused one scans again); without one the adapter scans just
+    /// for this. Either way the adapter is polled here: the application's scan
+    /// only indexes what passes its filter, and not at all while nobody reads
+    /// its channel. The application's scan is running afterwards.
+    ///
+    /// Only called from within [`Self::with_radio`], which cleans up when this
+    /// is dropped half way.
     async fn scan_for(&'static self, address: &str, allow_ibeacons: bool) {
         debug!("{address} is unknown, scanning for it");
-        let (tx, mut rx) = mpsc::channel(8);
-        if let Err(e) = self
-            .discover(Some(tx), ADDRESS_SCAN_MS, ScanFilter::None, allow_ibeacons)
-            .await
-        {
-            warn!("Failed to scan for {address}: {e}");
-            return;
-        }
-        while let Some(devices) = rx.recv().await {
-            if devices.iter().any(|dev| dev.address == address) {
+        let adapter = match self.get_or_init_adapter().await {
+            Ok(adapter) => adapter,
+            Err(e) => {
+                warn!("Failed to scan for {address}: {e}");
+                return;
+            }
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(ADDRESS_SCAN_MS);
+        loop {
+            // every round: the application may start, replace or stop its scan
+            // at any time
+            if let Err(e) = self.keep_scanning(&adapter, allow_ibeacons).await {
+                warn!("Failed to scan for {address}: {e}");
+                break;
+            }
+            sleep(Duration::from_millis(200)).await;
+            match adapter.peripherals().await {
+                Ok(discovered) => {
+                    Self::add_devices(&mut self.devices.clone(), discovered).await;
+                }
+                Err(e) => warn!("Failed to get the peripherals while scanning for {address}: {e}"),
+            }
+            if self.devices.lock().await.contains_key(address) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                debug!("{address} did not show up in the scan");
                 break;
             }
         }
-        // The scan task panics if it cannot deliver a snapshot, so it has to be
-        // stopped before the receiver goes away, and whatever it queued in the
-        // meantime has to be drained.
-        let _ = self.stop_scan().await;
-        while rx.recv().await.is_some() {}
+        self.release_radio().await;
+    }
+
+    /// Makes sure the adapter scans for [`Self::scan_for`]: through the
+    /// application's scan when it can see what is looked for, else through an
+    /// address scan next to the paused scan of the application.
+    async fn keep_scanning(
+        &self,
+        adapter: &Adapter,
+        allow_ibeacons: bool,
+    ) -> Result<(), btleplug::Error> {
+        let mut state = self.state.lock().await;
+        // a scan without iBeacons does not see the iBeacon that is looked for
+        let usable = state
+            .live_scan()
+            .map(|scan| scan.allow_ibeacons || !allow_ibeacons);
+        match usable {
+            Some(true) => {
+                if Self::resume_locked(&state, adapter).await.is_ok() {
+                    return Ok(());
+                }
+                // the application's scan stays paused, `release_radio` deals
+                // with it
+            }
+            Some(false) => Self::pause_locked(&state, adapter).await,
+            None => {}
+        }
+        if !state.address_scan {
+            ALLOW_IBEACONS.store(allow_ibeacons, Ordering::Release);
+            adapter
+                .start_scan(btleplug::api::ScanFilter::default())
+                .await?;
+            state.address_scan = true;
+        }
+        Ok(())
+    }
+
+    /// Stops the adapter scan of the application's scan, which stays alive.
+    async fn pause_locked(state: &HandlerState, adapter: &Adapter) {
+        let Some(scan) = state.live_scan() else {
+            return;
+        };
+        if !scan.paused.swap(true, Ordering::AcqRel) {
+            debug!("pausing the scan");
+            if let Err(e) = adapter.stop_scan().await {
+                warn!("Failed to pause the scan: {e}");
+            }
+        }
+    }
+
+    /// Has the adapter scan again for the application's paused scan.
+    async fn resume_locked(state: &HandlerState, adapter: &Adapter) -> Result<(), btleplug::Error> {
+        let Some(scan) = state.live_scan() else {
+            return Ok(());
+        };
+        if !scan.paused.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        debug!("resuming the scan");
+        ALLOW_IBEACONS.store(scan.allow_ibeacons, Ordering::Release);
+        adapter
+            .start_scan(btleplug::api::ScanFilter::default())
+            .await?;
+        scan.paused.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    /// Pauses the application's scan for a connect; [`Self::release_radio`]
+    /// has it going again.
+    async fn pause_scan(&'static self) {
+        let Ok(adapter) = self.get_or_init_adapter().await else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        Self::pause_locked(&state, &adapter).await;
+        if state.live_scan().is_some() {
+            return;
+        }
+        // a scan task that died left the adapter scanning
+        if state.scan.take().is_some() {
+            let _ = adapter.stop_scan().await;
+            drop(state);
+            self.send_scan_update(false).await;
+        }
+    }
+
+    /// Ends the address scan of [`Self::scan_for`] and has the application's
+    /// scan going again if it was paused. A scan that cannot be started again
+    /// is over.
+    async fn release_radio(&'static self) {
+        let Ok(adapter) = self.get_or_init_adapter().await else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        if state.address_scan {
+            state.address_scan = false;
+            if let Err(e) = adapter.stop_scan().await {
+                warn!("Failed to stop the address scan: {e}");
+            }
+        }
+        if let Err(e) = Self::resume_locked(&state, &adapter).await {
+            error!("Failed to resume the scan, ending it: {e}");
+            if let Some(scan) = state.scan.take() {
+                scan.task.abort();
+            }
+            drop(state);
+            self.send_scan_update(false).await;
+        }
     }
 
     /// Opens the link to `address`, registering it before the connect so
@@ -1079,11 +1339,16 @@ impl Handler {
             // discover in between would find no task to stop, and Android rejects a second scan
             let mut state = self.state.lock().await;
             // stop any ongoing scan (best-effort — scan may have already
-            // been stopped by the polling task)
-            if let Some(handle) = state.scan_task.take() {
-                handle.abort();
+            // been stopped by the polling task), also the one `scan_for` runs: it goes on
+            // with this one
+            let previous = state.scan.take();
+            if let Some(scan) = &previous {
+                scan.task.abort();
+            }
+            if previous.is_some() || state.address_scan {
                 let _ = adapter.stop_scan().await;
             }
+            state.address_scan = false;
             // start a new scan
             ALLOW_IBEACONS.store(allow_ibeacons, std::sync::atomic::Ordering::Release);
             adapter
@@ -1091,13 +1356,20 @@ impl Handler {
                 .await?;
             let mut self_devices = self.devices.clone();
             let adapter = adapter.clone();
+            let id = NEXT_SCAN_ID.fetch_add(1, Ordering::Relaxed);
+            let paused = Arc::new(AtomicBool::new(false));
+            let task_paused = paused.clone();
             // the device index is not cleared: a connect right after a scan starts resolves its
             // device there
-            state.scan_task = Some(tokio::task::spawn(async move {
+            let task = tokio::task::spawn(async move {
                 let loops = std::cmp::max(1, timeout / 200);
                 let mut devices;
                 for _ in 0..loops {
                     sleep(Duration::from_millis(200)).await;
+                    // a connect has the radio; the time keeps running
+                    if task_paused.load(Ordering::Acquire) {
+                        continue;
+                    }
                     let mut discovered = adapter
                         .peripherals()
                         .await
@@ -1112,18 +1384,42 @@ impl Handler {
                         }
                     }
                 }
-                let _ = adapter
-                    .stop_scan()
-                    .await
-                    .map_err(|e| error!("Failed to stop scan: {e}"));
-                self.send_scan_update(false).await;
-            }));
+                self.finish_scan(id, &adapter).await;
+            });
+            state.scan = Some(Scan {
+                id,
+                task,
+                allow_ibeacons,
+                paused,
+            });
             // takes the state lock itself
             drop(state);
             self.send_scan_update(true).await;
             Ok(())
         })
         .await
+    }
+
+    /// The end of the scan task: the scan `id` is over, unless another one
+    /// replaced it meanwhile.
+    async fn finish_scan(&self, id: u64, adapter: &Adapter) {
+        let mut state = self.state.lock().await;
+        if state.scan.as_ref().map(|scan| scan.id) != Some(id) {
+            return;
+        }
+        // a paused scan is not scanning, and what scans instead is not its to stop
+        let paused = state
+            .scan
+            .take()
+            .is_some_and(|scan| scan.paused.load(Ordering::Acquire));
+        if !paused {
+            let _ = adapter
+                .stop_scan()
+                .await
+                .map_err(|e| error!("Failed to stop scan: {e}"));
+        }
+        drop(state);
+        self.send_scan_update(false).await;
     }
 
     /// Discover provided services and charecteristics
@@ -1148,46 +1444,52 @@ impl Handler {
                 return self.read_services(&device, &gatt_lock).await;
             }
 
-            let _connecting = self.connect_lock.lock().await;
-            let device = self.resolve_peripheral(address, false).await?;
-            if device.is_connected().await? {
-                // connected, but not by us: leave it that way
-                return self.read_services(&device, &Arc::new(Mutex::new(()))).await;
-            }
-            if let Err(e) = self.connect_device(address, device.clone(), true).await {
-                error!("Failed to connect for discovery: {e}");
-                self.clear_link(address, None).await;
-                return Err(e);
-            }
-            let (id, device, gatt_lock, mut connected_rx) = {
-                let links = self.links();
-                let link = links.get(address).ok_or(Error::ConnectionFailed)?;
-                (
-                    link.id,
-                    link.peripheral.clone(),
-                    link.gatt_lock.clone(),
-                    link.connected.subscribe(),
-                )
-            };
-            debug!("discovering services on {address}");
-            let services = self.read_services(&device, &gatt_lock).await;
-            if *connected_rx.borrow_and_update() {
-                if let Err(e) = device.disconnect().await {
-                    warn!("Failed to disconnect after the discovery: {e}");
-                }
-                debug!("waiting for disconnect event");
-                let timeout = self.timeouts().disconnect;
-                if tokio::time::timeout(timeout, connected_rx.changed())
-                    .await
-                    .is_err()
-                {
-                    warn!("timed out waiting for the disconnect event after the discovery");
-                }
-            }
-            self.clear_link(address, Some(id)).await;
-            services
+            self.with_radio(self.discover_services_locked(address))
+                .await
         })
         .await
+    }
+
+    /// [`Self::discover_services`] for a device without a link, with the
+    /// connect lock held, see [`Self::with_radio`].
+    async fn discover_services_locked(&'static self, address: &str) -> Result<Vec<Service>, Error> {
+        let (device, _) = self.resolve_peripheral(address, false).await?;
+        if device.is_connected().await? {
+            // connected, but not by us: leave it that way
+            return self.read_services(&device, &Arc::new(Mutex::new(()))).await;
+        }
+        if let Err(e) = self.connect_device(address, device.clone(), true).await {
+            error!("Failed to connect for discovery: {e}");
+            self.clear_link(address, None).await;
+            return Err(e);
+        }
+        let (id, device, gatt_lock, mut connected_rx) = {
+            let links = self.links();
+            let link = links.get(address).ok_or(Error::ConnectionFailed)?;
+            (
+                link.id,
+                link.peripheral.clone(),
+                link.gatt_lock.clone(),
+                link.connected.subscribe(),
+            )
+        };
+        debug!("discovering services on {address}");
+        let services = self.read_services(&device, &gatt_lock).await;
+        if *connected_rx.borrow_and_update() {
+            if let Err(e) = device.disconnect().await {
+                warn!("Failed to disconnect after the discovery: {e}");
+            }
+            debug!("waiting for disconnect event");
+            let timeout = self.timeouts().disconnect;
+            if tokio::time::timeout(timeout, connected_rx.changed())
+                .await
+                .is_err()
+            {
+                warn!("timed out waiting for the disconnect event after the discovery");
+            }
+        }
+        self.clear_link(address, Some(id)).await;
+        services
     }
 
     /// The services of `device`, discovering them first if needed.
@@ -1209,17 +1511,30 @@ impl Handler {
     }
 
     /// Stops scanning for devices
+    ///
+    /// Ends the scan started with [`discover`](Self::discover) for good, also
+    /// while a connect has it paused.
     /// # Errors
     /// Stops an ongoing scan. The polling task is aborted first, then the
     /// adapter scan is stopped (best-effort — it may have already been
     /// stopped by the polling task finishing).
     pub async fn stop_scan(&'static self) -> Result<(), Error> {
         crate::rt::compat(async move {
-            if let Some(handle) = self.state.lock().await.scan_task.take() {
-                handle.abort();
+            let adapter = self.get_or_init_adapter().await;
+            {
+                let mut state = self.state.lock().await;
+                if let Some(scan) = state.scan.take() {
+                    scan.task.abort();
+                }
+                // the scan a connect runs to find its address is not the
+                // application's to stop
+                if !state.address_scan {
+                    if let Ok(adapter) = &adapter {
+                        let _ = adapter.stop_scan().await;
+                    }
+                }
             }
-            let adapter = self.get_or_init_adapter().await?;
-            let _ = adapter.stop_scan().await;
+            adapter?;
             self.send_scan_update(false).await;
             Ok(())
         })
