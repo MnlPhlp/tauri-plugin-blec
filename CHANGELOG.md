@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.0](https://github.com/MnlPhlp/tauri-plugin-blec/compare/v0.19.0...v0.20.0) (2026-11-11)
+
+
+### Features
+
+* **blec:** connect by address when the scan does not see the device ([#80](https://github.com/MnlPhlp/tauri-plugin-blec/issues/80)) ([d4d84d5](https://github.com/MnlPhlp/tauri-plugin-blec/commit/d4d84d5be7c4840d1e70efdd1dab63ed708a78f4))
+
+
+### Bug Fixes
+
+* **blec:** rescan for a device the backend forgot, a connect no longer ends the application's scan ([#82](https://github.com/MnlPhlp/tauri-plugin-blec/issues/82)) ([7f73c18](https://github.com/MnlPhlp/tauri-plugin-blec/commit/7f73c182cd32486a922fcdaaa601230bb08e5298))
+
 ## [0.19.0](https://github.com/MnlPhlp/tauri-plugin-blec/compare/v0.18.0...v0.19.0) (2026-11-02)
 
 
