@@ -10,4 +10,5 @@ mod multi;
 mod notify;
 mod runtime;
 mod scan;
+mod scan_connect;
 mod stress;
